@@ -1,0 +1,5 @@
+source=??????????.doc
+template=D:\Project_Engineering\sport1.0.1\backend\app\templates\results_standing_long_jump_style_template.xlsx
+rows=81
+cols=13
+merged_ranges=9

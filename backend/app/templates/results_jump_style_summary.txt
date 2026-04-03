@@ -1,0 +1,5 @@
+source=D:\Project_Engineering\sport1.0.1\backend\app\templates\jump_style_source.html
+template=D:\Project_Engineering\sport1.0.1\backend\app\templates\results_jump_style_template.xlsx
+rows=77
+cols=36
+merged_ranges=17

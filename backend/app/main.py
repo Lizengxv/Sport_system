@@ -3,6 +3,7 @@
 
 
 import os
+import hashlib
 
 
 
@@ -486,6 +487,31 @@ def normalize_event_name(event_name: str) -> str:
     return value
 
 
+def normalize_gender_value(gender: Optional[str]) -> str:
+    value = (gender or "").strip()
+    lowered = value.lower()
+    if value in {"?", "??", "???"} or lowered in {"male", "m"}:
+        return "?"
+    if value in {"?", "??", "???"} or lowered in {"female", "f"}:
+        return "?"
+    if value in {"??", "???"} or lowered in {"mixed", "mix"}:
+        return "??"
+    return value
+
+
+def gender_filter_values(gender: Optional[str]) -> List[str]:
+    normalized = normalize_gender_value(gender)
+    if not normalized:
+        return []
+    if normalized == "?":
+        return ["?", "??", "???"]
+    if normalized == "?":
+        return ["?", "??", "???"]
+    if normalized == "??":
+        return ["??", "???"]
+    return [normalized]
+
+
 def is_high_jump_event(event_name: str) -> bool:
     value = normalize_event_name(event_name)
     keywords = ["\u8df3\u9ad8", "highjump", "high-jump"]
@@ -526,8 +552,14 @@ def classify_event_table(event_name: str) -> str:
 
 def is_relay_event(event_name: str) -> bool:
     value = normalize_event_name(event_name)
-    relay_keywords = ["4*100", "4*200", "4*400", "??", "relay"]
+    relay_keywords = ["4*100", "4*200", "4*400", "\u63a5\u529b", "relay"]
     return any(keyword in value for keyword in relay_keywords)
+
+
+def build_relay_storage_student_id(event_name: str, name: str, gender: str = "") -> str:
+    raw_key = f"{normalize_event_name(event_name)}|{(name or '').strip()}|{(gender or '').strip()}"
+    digest = hashlib.sha1(raw_key.encode("utf-8")).hexdigest()[:20].upper()
+    return f"TEAM_{digest}"
 
 
 def score_higher_better(event_name: str) -> bool:
@@ -609,8 +641,10 @@ def rank_distance_event(event_name: str, round_value: str, db: Session):
 
 
 
-def list_distance_results(event_name: str, round_value: str | None, name: str | None, student_id: str | None, db: Session):
+def list_distance_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, db: Session):
     query = select(ResultDistance).where(ResultDistance.event == event_name)
+    if college:
+        query = query.where(ResultDistance.college == college)
     if name:
         query = query.where(ResultDistance.name == name)
     if student_id:
@@ -689,8 +723,10 @@ def list_distance_results(event_name: str, round_value: str | None, name: str | 
     return payload
 
 
-def list_jump_results(event_name: str, round_value: str | None, name: str | None, student_id: str | None, db: Session):
+def list_jump_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, db: Session):
     query = select(ResultJump).where(ResultJump.event == event_name)
+    if college:
+        query = query.where(ResultJump.college == college)
     if name:
         query = query.where(ResultJump.name == name)
     if student_id:
@@ -729,6 +765,7 @@ def list_jump_results(event_name: str, round_value: str | None, name: str | None
 
 def list_track_results(
     event: Optional[str],
+    college: Optional[str],
     name: Optional[str],
     student_id: Optional[str],
     round_value: Optional[str],
@@ -737,6 +774,8 @@ def list_track_results(
     query = select(Result)
     if event:
         query = query.where(Result.event == event)
+    if college:
+        query = query.where(Result.college == college)
     if name:
         query = query.where(Result.name == name)
     if student_id:
@@ -1158,7 +1197,7 @@ def list_athletes(
     if student_id:
         query = query.where(Athlete.student_id == student_id)
     if gender:
-        query = query.where(Athlete.gender == gender)
+        query = query.where(Athlete.gender.in_(gender_filter_values(gender)))
     if event:
         query = query.where(Athlete.event == event)
     if group_name:
@@ -1209,7 +1248,7 @@ def query_groupings(
         athlete_query = select(Athlete.student_id)
         if event:
             athlete_query = athlete_query.where(Athlete.event == event)
-        athlete_query = athlete_query.where(Athlete.gender == gender)
+        athlete_query = athlete_query.where(Athlete.gender.in_(gender_filter_values(gender)))
         student_ids = [row[0] for row in db.execute(athlete_query).all()]
         if not student_ids:
             return []
@@ -1249,6 +1288,8 @@ def create_athlete(req: AthleteCreate, db: Session = Depends(get_db)):
 
 
     db.add(athlete)
+    db.flush()
+    sync_event_participant_counts(db)
 
 
 
@@ -1300,6 +1341,8 @@ def update_athlete(athlete_id: int, req: AthleteUpdate, db: Session = Depends(ge
 
 
 
+    db.flush()
+    sync_event_participant_counts(db)
     db.commit()
 
 
@@ -1337,6 +1380,8 @@ def delete_athlete(athlete_id: int, db: Session = Depends(get_db)):
 
 
     db.delete(athlete)
+    db.flush()
+    sync_event_participant_counts(db)
 
 
 
@@ -1346,6 +1391,28 @@ def delete_athlete(athlete_id: int, db: Session = Depends(get_db)):
 
     return {"message": "deleted"}
 
+
+def sync_event_participant_counts(db: Session):
+    counts: Dict[str, int] = {}
+    for event_name in db.scalars(select(Athlete.event)).all():
+        if not event_name:
+            continue
+        counts[event_name] = counts.get(event_name, 0) + 1
+
+    existing_events = {row.name: row for row in db.scalars(select(Event)).all()}
+    for event_name, event_row in existing_events.items():
+        event_row.participant_count = counts.get(event_name, 0)
+
+    for event_name, count in counts.items():
+        if event_name not in existing_events:
+            db.add(
+                Event(
+                    name=event_name,
+                    participant_count=count,
+                    best_record=None,
+                    record_holder="",
+                )
+            )
 
 
 
@@ -1357,16 +1424,16 @@ def delete_athlete(athlete_id: int, db: Session = Depends(get_db)):
 
 
 ATHLETE_TEMPLATE_HEADERS = {
-    "college": "瀛﹂櫌",
-    "name": "濮撳悕",
-    "student_id": "瀛﹀彿",
-    "gender": "鎬у埆",
-    "event": "椤圭洰",
-    "group_name": "缁勫埆",
-    "score": "鎴愮哗",
-    "rank": "鎺掑悕",
-    "points": "绉垎",
-    "phone": "鐢佃瘽",
+    "college": "学院",
+    "name": "姓名",
+    "student_id": "学号",
+    "gender": "性别",
+    "event": "项目",
+    "group_name": "组别",
+    "score": "成绩",
+    "rank": "排名",
+    "points": "积分",
+    "phone": "电话",
 }
 
 ATHLETE_TEMPLATE_ORDER = [
@@ -1390,27 +1457,27 @@ def import_athletes(file: UploadFile = File(...), db: Session = Depends(get_db))
     try:
         df = pd.read_excel(file.file)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"鏃犳硶璇诲彇 Excel 鏂囦欢: {exc}")
+        raise HTTPException(status_code=400, detail=f"Unable to read Excel file: {exc}")
 
     if df.empty:
-        raise HTTPException(status_code=400, detail="瀵煎叆鏂囦欢涓虹┖锛岃妫€鏌ュ悗閲嶈瘯")
+        raise HTTPException(status_code=400, detail="Import file is empty")
 
     def normalize(name: str) -> str:
         value = str(name or "").strip().lower()
-        value = re.sub(r"[\s\-_()\uFF08\uFF09\u3010\u3011\[\]:\uFF1A]+", "", value)
+        value = re.sub(r"[\s\-_()（）【】\[\]:：]+", "", value)
         return value
 
     aliases = {
-        "college": ["\u5b66\u9662", "\u9662\u7cfb", "college", "collegename"],
-        "name": ["\u59d3\u540d", "\u8fd0\u52a8\u5458\u59d3\u540d", "name", "studentname"],
-        "student_id": ["\u5b66\u53f7", "\u5b66\u53f7id", "studentid", "student_no", "id"],
-        "gender": ["\u6027\u522b", "gender", "sex"],
-        "event": ["\u9879\u76ee", "\u6bd4\u8d5b\u9879\u76ee", "event", "eventname"],
-        "group_name": ["\u7ec4\u522b", "\u5206\u7ec4", "group", "groupname"],
-        "score": ["\u6210\u7ee9", "score", "result"],
-        "rank": ["\u6392\u540d", "\u540d\u6b21", "rank"],
-        "points": ["\u79ef\u5206", "\u5f97\u5206", "points", "point"],
-        "phone": ["\u7535\u8bdd", "\u624b\u673a\u53f7", "\u8054\u7cfb\u65b9\u5f0f", "phone", "mobile"],
+        "college": ["学院", "院系", "college", "collegename"],
+        "name": ["姓名", "运动员姓名", "name", "studentname"],
+        "student_id": ["学号", "学号id", "studentid", "student_no", "id"],
+        "gender": ["性别", "gender", "sex"],
+        "event": ["项目", "比赛项目", "event", "eventname"],
+        "group_name": ["组别", "分组", "group", "groupname"],
+        "score": ["成绩", "score", "result"],
+        "rank": ["排名", "名次", "rank"],
+        "points": ["积分", "得分", "points", "point"],
+        "phone": ["电话", "手机号", "联系方式", "phone", "mobile"],
     }
 
     normalized_columns = {normalize(col): col for col in list(df.columns)}
@@ -1464,6 +1531,94 @@ def import_athletes(file: UploadFile = File(...), db: Session = Depends(get_db))
         except Exception:
             return None
 
+    prepared: Dict[tuple, Dict] = {}
+    invalid_rows: List[str] = []
+    merged_duplicates = 0
+
+    for excel_rownum, row in enumerate(df.iterrows(), start=2):
+        _, row_data = row
+        college = as_text(cell(row_data, "college"))
+        name = as_text(cell(row_data, "name"))
+        student_id = as_text(cell(row_data, "student_id"))
+        gender = normalize_gender_value(as_text(cell(row_data, "gender")))
+        event_name = as_text(cell(row_data, "event"))
+        group_name = as_text(cell(row_data, "group_name")) or None
+        score = as_float(cell(row_data, "score"))
+        rank = as_int(cell(row_data, "rank"))
+        points = as_int(cell(row_data, "points"))
+        phone = as_text(cell(row_data, "phone")) or None
+
+        if not any([college, name, student_id, gender, event_name, group_name, phone, score, rank, points]):
+            continue
+
+        if not college or not name or not gender or not event_name:
+            invalid_rows.append(f"Row {excel_rownum}: missing required fields among college/name/gender/event")
+            continue
+
+        relay_event = is_relay_event(event_name)
+        if not relay_event and not student_id:
+            invalid_rows.append(f"Row {excel_rownum}: individual event missing student_id")
+            continue
+
+        logical_identity = f"{name}|{gender}" if relay_event else student_id
+        if not logical_identity:
+            invalid_rows.append(f"Row {excel_rownum}: missing unique identity value")
+            continue
+
+        storage_student_id = student_id or build_relay_storage_student_id(event_name, name, gender)
+        logical_key = (normalize_event_name(event_name), logical_identity.strip())
+        candidate = {
+            "college": college,
+            "name": name,
+            "student_id": storage_student_id,
+            "gender": gender,
+            "event": event_name,
+            "group_name": group_name,
+            "score": score,
+            "rank": rank,
+            "points": points,
+            "phone": phone,
+            "_rownum": excel_rownum,
+            "_relay": relay_event,
+            "_identity": logical_identity.strip(),
+        }
+
+        existing = prepared.get(logical_key)
+        if existing is None:
+            prepared[logical_key] = candidate
+            continue
+
+        conflict_fields = ["college", "name", "gender", "event"]
+        if not relay_event:
+            conflict_fields.append("student_id")
+        conflicts = [
+            field
+            for field in conflict_fields
+            if existing.get(field) not in {None, ""}
+            and candidate.get(field) not in {None, ""}
+            and existing.get(field) != candidate.get(field)
+        ]
+        if conflicts:
+            key_label = "name+gender+event" if relay_event else "student_id+event"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Import failed: duplicate {key_label} conflict at rows "
+                    f"{existing['_rownum']} and {excel_rownum}: {logical_identity} / {event_name}"
+                ),
+            )
+
+        for optional_field in ["group_name", "score", "rank", "points", "phone"]:
+            if existing.get(optional_field) in {None, ""} and candidate.get(optional_field) not in {None, ""}:
+                existing[optional_field] = candidate[optional_field]
+        merged_duplicates += 1
+
+    if invalid_rows:
+        preview = " | ".join(invalid_rows[:10])
+        if len(invalid_rows) > 10:
+            preview += f" | and {len(invalid_rows) - 10} more"
+        raise HTTPException(status_code=400, detail=f"Import failed: {preview}")
+
     db.execute(delete(Athlete))
     db.execute(delete(Grouping))
     db.execute(delete(Result))
@@ -1477,52 +1632,29 @@ def import_athletes(file: UploadFile = File(...), db: Session = Depends(get_db))
     LAST_IMPORT_TS = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     inserted = 0
-    for _, row in df.iterrows():
-        student_id = as_text(cell(row, "student_id"))
-        event = as_text(cell(row, "event"))
-        if not student_id or not event:
-            continue
-
+    for item in prepared.values():
         athlete = Athlete(
-            college=as_text(cell(row, "college")),
-            name=as_text(cell(row, "name")),
-            student_id=student_id,
-            gender=as_text(cell(row, "gender")),
-            event=event,
-            group_name=as_text(cell(row, "group_name")) or None,
-            score=as_float(cell(row, "score")),
-            rank=as_int(cell(row, "rank")),
-            points=as_int(cell(row, "points")),
-            phone=as_text(cell(row, "phone")) or None,
+            college=item["college"],
+            name=item["name"],
+            student_id=item["student_id"],
+            gender=item["gender"],
+            event=item["event"],
+            group_name=item["group_name"],
+            score=item["score"],
+            rank=item["rank"],
+            points=item["points"],
+            phone=item["phone"],
         )
         db.add(athlete)
         inserted += 1
 
     db.commit()
 
-    athletes = db.scalars(select(Athlete)).all()
-    counts: Dict[str, int] = {}
-    for item in athletes:
-        counts[item.event] = counts.get(item.event, 0) + 1
-
-    existing_events = {e.name: e for e in db.scalars(select(Event)).all()}
-    for event_name, event in existing_events.items():
-        event.participant_count = counts.get(event_name, 0)
-    for event_name, count in counts.items():
-        if event_name in existing_events:
-            existing_events[event_name].participant_count = count
-        else:
-            db.add(
-                Event(
-                    name=event_name,
-                    participant_count=count,
-                    best_record=None,
-                    record_holder="",
-                )
-            )
+    sync_event_participant_counts(db)
     db.commit()
 
-    return {"message": f"imported {inserted} rows"}
+    suffix = f", merged {merged_duplicates} duplicate rows" if merged_duplicates else ""
+    return {"message": f"imported {inserted} rows{suffix}"}
 
 
 @app.get("/athletes/export")
@@ -1654,12 +1786,27 @@ def list_groups(
 
 @app.post("/groups/confirm")
 def confirm_groups(req: GroupConfirmRequest, db: Session = Depends(get_db)):
-    db.execute(
-        delete(Grouping).where(
-            Grouping.event == req.event,
-            Grouping.round == req.round,
-        )
+    delete_query = delete(Grouping).where(
+        Grouping.event == req.event,
+        Grouping.round == req.round,
     )
+    target_gender = (req.gender or "").strip()
+    if target_gender:
+        student_ids = [
+            row[0]
+            for row in db.execute(
+                select(Athlete.student_id).where(
+                    Athlete.event == req.event,
+                    Athlete.gender.in_(gender_filter_values(target_gender)),
+                )
+            ).all()
+        ]
+        if student_ids:
+            delete_query = delete_query.where(Grouping.student_id.in_(student_ids))
+        else:
+            delete_query = None
+    if delete_query is not None:
+        db.execute(delete_query)
     for item in req.groups:
         grouping = Grouping(**item.model_dump())
         db.add(grouping)
@@ -1752,7 +1899,7 @@ def list_group_candidates(
     eligible_athletes = db.scalars(
         select(Athlete).where(
             Athlete.event == event,
-            Athlete.gender == gender,
+            Athlete.gender.in_(gender_filter_values(gender)),
         )
     ).all()
     if round != "final":
@@ -1835,6 +1982,7 @@ def list_group_candidates(
 
 def list_results(
     event: Optional[str] = None,
+    college: Optional[str] = None,
     name: Optional[str] = None,
     student_id: Optional[str] = None,
     round: Optional[str] = None,
@@ -1843,21 +1991,21 @@ def list_results(
     if event:
         kind = classify_event_table(event)
         if kind == "distance" or has_distance_records(event, db):
-            return list_distance_results(event, round, name, student_id, db)
+            return list_distance_results(event, round, college, name, student_id, db)
         if kind == "jump" or has_jump_records(event, db):
-            return list_jump_results(event, round, name, student_id, db)
-        return list_track_results(event, name, student_id, round, db)
+            return list_jump_results(event, round, college, name, student_id, db)
+        return list_track_results(event, college, name, student_id, round, db)
 
     merged = []
-    merged.extend(list_track_results(None, name, student_id, round, db))
+    merged.extend(list_track_results(None, college, name, student_id, round, db))
 
     distance_events = [row[0] for row in db.execute(select(distinct(ResultDistance.event))).all() if row[0]]
     for event_name in distance_events:
-        merged.extend(list_distance_results(event_name, round, name, student_id, db))
+        merged.extend(list_distance_results(event_name, round, college, name, student_id, db))
 
     jump_events = [row[0] for row in db.execute(select(distinct(ResultJump.event))).all() if row[0]]
     for event_name in jump_events:
-        merged.extend(list_jump_results(event_name, round, name, student_id, db))
+        merged.extend(list_jump_results(event_name, round, college, name, student_id, db))
 
     round_order = {"prelim": 0, "semi": 1, "final": 2, "one": 3}
     merged.sort(
@@ -2262,12 +2410,13 @@ def export_events(db: Session = Depends(get_db)):
 @app.get("/export/results")
 def export_results(
     event: Optional[str] = None,
+    college: Optional[str] = None,
     name: Optional[str] = None,
     student_id: Optional[str] = None,
     round: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    rows = list_results(event=event, name=name, student_id=student_id, round=round, db=db)
+    rows = list_results(event=event, college=college, name=name, student_id=student_id, round=round, db=db)
 
     def format_export_date(value):
         if not value:
@@ -2326,6 +2475,19 @@ def _list_template_groupings(event: Optional[str], round_value: Optional[str], d
         )
     )
     return rows
+
+
+TEMPLATE_FONT_NAME = "SimSun"
+TEMPLATE_FONT_SIZE = 12
+
+
+def _apply_uniform_template_font(ws, min_row: int, max_row: int, min_col: int, max_col: int):
+    for row in ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col):
+        for cell in row:
+            font = copy(cell.font)
+            font.name = TEMPLATE_FONT_NAME
+            font.size = TEMPLATE_FONT_SIZE
+            cell.font = font
 
 
 def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
@@ -2391,6 +2553,9 @@ def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
         ws.freeze_panes = "A3"
         ws.print_area = f"A1:AJ{max_rows}"
 
+
+    max_rows = max(ws.max_row, len(athletes) + 2, 77 if not using_template else 0)
+    _apply_uniform_template_font(ws, 1, max_rows, 1, 36)
 
     output = io.BytesIO()
     wb.save(output)
@@ -2471,6 +2636,9 @@ def _build_field_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
         ws.freeze_panes = "A3"
         ws.print_area = f"A1:M{max_rows}"
 
+    max_rows = max(ws.max_row, len(athletes) + 2, 81 if not using_template else 0)
+    _apply_uniform_template_font(ws, 1, max_rows, 1, 13)
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -2521,6 +2689,7 @@ def _build_track_results_template_groups(group_rows: List[Grouping], athletes: L
 
 
 def _build_track_results_template_stream(event: Optional[str], group_rows: List[Grouping], athletes: List[Athlete]) -> io.BytesIO:
+    groups = _build_track_results_template_groups(group_rows, athletes)
     template_path = os.path.join(
         os.path.dirname(__file__),
         "templates",
@@ -2543,7 +2712,6 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
             letter = get_column_letter(col_idx)
             ws.column_dimensions[letter].width = template_ws.column_dimensions[letter].width
 
-        groups = _build_track_results_template_groups(group_rows, athletes)
         footer_text = template_ws.cell(7, 1).value or ""
         footer_style = template_ws.cell(7, 1)
         title_style = template_ws.cell(1, 1)
@@ -2654,6 +2822,9 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
 
     if os.path.exists(template_path):
         ws.print_area = f"A1:I{max(7, len(groups) * 8 - 1)}"
+
+    max_rows = max(ws.max_row, len(groups) * 8 - 1 if groups else ws.max_row)
+    _apply_uniform_template_font(ws, 1, max_rows, 1, 9)
 
     output = io.BytesIO()
     wb.save(output)

@@ -149,6 +149,7 @@
         <div class="form-row">
           <label>性别</label>
           <select v-model="groupForm.gender">
+            <option value="">请选择性别</option>
             <option value="男">男</option>
             <option value="女">女</option>
             <option value="混合">混合</option>
@@ -167,9 +168,10 @@
           <label>每组人数</label>
           <select v-model.number="groupForm.per_group">
             <option :value="4">4</option>
+            <option :value="5">5</option>
             <option :value="6">6</option>
+            <option :value="7">7</option>
             <option :value="8">8</option>
-            <option :value="10">10</option>
           </select>
         </div>
 
@@ -180,9 +182,9 @@
 
         <div class="split-panel">
           <div class="panel-card">
-            <h4>未分组人员</h4>
+            <h4>未分组人员（{{ ungrouped.length }}人）</h4>
             <table class="table">
-              <thead><tr><th>学院</th><th>姓名</th><th>学号</th></tr></thead>
+              <thead><tr><th>学院</th><th>姓名</th><th>{{ identityColumnLabel(groupForm.event, ungrouped) }}</th></tr></thead>
               <tbody>
                 <tr v-for="row in ungrouped" :key="row.id"><td>{{ row.college }}</td><td>{{ row.name }}</td><td>{{ row.student_id }}</td></tr>
               </tbody>
@@ -194,7 +196,7 @@
           <div class="panel-card">
             <h4>已分组人员</h4>
             <table class="table">
-              <thead><tr><th>学院</th><th>姓名</th><th>学号</th><th>组别</th><th>{{ usesBibNumber(groupForm.event) ? '号码' : '道次' }}</th></tr></thead>
+              <thead><tr><th>学院</th><th>姓名</th><th>{{ identityColumnLabel(selectedGroupEvent || groupForm.event, selectedGroupRows) }}</th><th>组别</th><th>{{ usesBibNumber(selectedGroupEvent || groupForm.event) ? '号码' : '道次' }}</th></tr></thead>
               <tbody>
                 <tr v-for="(row, idx) in selectedGroupRows" :key="idx">
                   <td>{{ row.college }}</td><td>{{ row.name }}</td><td>{{ row.student_id }}</td>
@@ -232,9 +234,9 @@
         <div v-if="groupedResults.length === 0" class="muted">暂无分组结果</div>
         <h4 v-if="groupedResults.length" style="margin-top: 8px">{{ groupRoundText }}</h4>
         <div v-for="(group, idx) in groupedResults" :key="`${group.event}-${group.label}-${idx}`" style="margin-top: 12px">
-          <h4><button class="btn secondary" @click="selectGroup(group.event, group.label)">{{ group.event }}-{{ groupGenderText(group.gender || groupForm.gender) }}{{ group.label }}组</button></h4>
+          <h4><button class="btn secondary" @click="selectGroup(group.event, group.label)">{{ formatGroupResultTitle(group) }}</button></h4>
           <table class="table">
-            <thead><tr><th>项目</th><th>学院</th><th>学号</th><th>姓名</th><th>组别</th><th>{{ usesBibNumber(groupForm.event) ? '号码' : '道次' }}</th></tr></thead>
+            <thead><tr><th>项目</th><th>学院</th><th>{{ identityColumnLabel(group.event, group.rows) }}</th><th>姓名</th><th>组别</th><th>{{ usesBibNumber(group.event) ? '号码' : '道次' }}</th></tr></thead>
             <tbody>
               <tr v-for="(row, rowIdx) in group.rows" :key="rowIdx">
                 <td>{{ row.event }}</td><td>{{ row.college }}</td><td>{{ row.student_id }}</td><td>{{ row.name }}</td>
@@ -262,6 +264,15 @@
           </select>
         </div>
         <div class="form-row">
+          <label>性别</label>
+          <select v-model="resultForm.gender">
+            <option value="">请选择性别</option>
+            <option value="男">男</option>
+            <option value="女">女</option>
+            <option value="混合">混合</option>
+          </select>
+        </div>
+        <div class="form-row">
           <label>轮次</label>
           <select v-model="resultForm.round">
             <option value="prelim">预赛</option>
@@ -270,46 +281,57 @@
             <option value="one">一轮次</option>
           </select>
         </div>
+        <div class="form-row">
+          <label>成绩单位</label>
+          <select v-model="resultForm.unit">
+            <option value="秒">秒</option>
+            <option value="毫秒">毫秒</option>
+            <option value="厘米">厘米</option>
+            <option value="米">米</option>
+          </select>
+        </div>
         <button class="btn secondary" @click="queryRoster">查询名单</button>
         <button class="btn" @click="submitBatchResults">保存成绩</button>
         <p v-if="resultMessage" class="muted">{{ resultMessage }}</p>
 
-        <table class="table" style="margin-top: 16px">
-          <thead>
-            <tr>
-              <th>项目</th><th>学院</th><th>姓名</th><th>学号</th><th>成绩</th><th>排名</th><th>日期</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in roster" :key="row.id">
-              <td>{{ resultForm.event }}</td>
-              <td>{{ row.college }}</td>
-              <td>{{ row.name }}</td>
-              <td>{{ row.student_id }}</td>
-              <td>
-                <div v-if="isDistanceEvent(resultForm.event)" class="distance-score">
-                  <div class="distance-row">
-                    <input v-model.number="row.attempt1" placeholder="第一次" />
-                    <input v-model.number="row.attempt2" placeholder="第二次" />
-                    <input v-model.number="row.attempt3" placeholder="第三次" />
-                  </div>
-                  <div class="muted">最佳：{{ bestAttempt(row) || '' }}</div>
-                </div>
-                <div v-else class="score-input">
-                  <input v-model.number="row.inputScore" />
-                  <select v-model="row.inputUnit">
-                    <option value="秒">秒</option>
-                    <option value="毫秒">毫秒</option>
-                    <option value="厘米">厘米</option>
-                    <option value="米">米</option>
-                  </select>
-                </div>
-              </td>
-              <td>{{ row.rank ?? '' }}</td>
-              <td>{{ row.date ? formatDate(row.date) : '' }}</td>
-            </tr>
-          </tbody>
-        </table>
+                <div v-if="!resultsRosterGroups.length" class="muted" style="margin-top: 16px">暂无录入名单</div>
+        <div v-else>
+          <div v-for="group in resultsRosterGroups" :key="`entry-${group.label || 'ungrouped'}`" style="margin-top: 16px">
+            <h4 style="margin-bottom: 8px">{{ group.displayLabel }}</h4>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>项目</th><th>学院</th><th>姓名</th><th>{{ identityColumnLabel(resultForm.event, group.rows) }}</th><th>{{ usesBibNumber(resultForm.event) ? '号码' : '道次' }}</th><th>成绩</th><th>排名</th><th>日期</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in group.rows" :key="`${group.label || 'ungrouped'}-${row.id}-${row.student_id}`">
+                  <td>{{ resultForm.event }}</td>
+                  <td>{{ row.college }}</td>
+                  <td>{{ row.name }}</td>
+                  <td>{{ row.student_id }}</td>
+                  <td>{{ row.lane ?? '' }}</td>
+                  <td>
+                    <div v-if="isDistanceEvent(resultForm.event)" class="distance-score">
+                      <div class="distance-row">
+                        <input v-model.number="row.attempt1" placeholder="第一次" />
+                        <input v-model.number="row.attempt2" placeholder="第二次" />
+                        <input v-model.number="row.attempt3" placeholder="第三次" />
+                      </div>
+                      <div class="muted">最佳：{{ bestAttempt(row) || '' }}</div>
+                    </div>
+                    <div v-else class="score-input">
+                      <input v-model.number="row.inputScore" />
+                      <span class="unit-badge">{{ resultForm.unit }}</span>
+                    </div>
+                  </td>
+                  <td>{{ row.rank ?? '' }}</td>
+                  <td>{{ row.date ? formatDate(row.date) : '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <section v-else-if="active === 'results-query'">
@@ -323,6 +345,7 @@
         </div>
 
         <div class="form-row"><label>项目</label><select v-model="resultsQuery.event"><option value="">请选择项目</option><option v-for="item in eventOptions" :key="`rq-${item}`" :value="item">{{ item }}</option></select></div>
+        <div class="form-row"><label>学院</label><input v-model="resultsQuery.college" placeholder="输入学院" /></div>
         <div class="form-row"><label>姓名</label><input v-model="resultsQuery.name" placeholder="输入姓名" /></div>
         <div class="form-row"><label>学号</label><input v-model="resultsQuery.student_id" placeholder="输入学号" /></div>
         <div class="form-row">
@@ -488,13 +511,17 @@ const importMessage = ref('');
 const eventsRefreshMessage = ref('');
 const eventsRefreshActive = ref(false);
 const groupMessage = ref('');
+const getRoundLabel = (round) => {
+  if (round === 'prelim') return '预赛';
+  if (round === 'semi') return '半决赛';
+  if (round === 'final') return '决赛';
+  if (round === 'one') return '一轮次';
+  return '';
+};
+
 const groupRoundText = computed(() => {
   const round = groupQuery.round || groupForm.round;
-  if (round === 'prelim') return '';
-  if (round === 'semi') return '';
-  if (round === 'final') return '';
-  if (round === 'one') return '';
-  return '';
+  return getRoundLabel(round);
 });
 
 const showModal = ref(false);
@@ -525,12 +552,13 @@ const groupQuery = reactive({
 const ungrouped = ref([]);
 const groupedResults = ref([]);
 const selectedGroupLabel = ref('');
-const selectedGroupRows = computed(() => {
-  if (!selectedGroupLabel.value) return [];
+const selectedGroup = computed(() => {
+  if (!selectedGroupLabel.value) return null;
   const [event, label] = selectedGroupLabel.value.split('__');
-  const match = groupedResults.value.find((item) => item.event === event && item.label === label);
-  return match ? match.rows : [];
+  return groupedResults.value.find((item) => item.event === event && item.label === label) || null;
 });
+const selectedGroupRows = computed(() => (selectedGroup.value ? selectedGroup.value.rows : []));
+const selectedGroupEvent = computed(() => selectedGroup.value?.event || groupQuery.event || groupForm.event || '');
 
 
 const isLongDistanceEvent = (eventName) => {
@@ -545,6 +573,12 @@ const isLongDistanceEvent = (eventName) => {
 
 const usesBibNumber = (eventName) => isLongDistanceEvent(eventName) || isDistanceEvent(eventName) || isHighJumpEvent(eventName);
 
+const isRelayEvent = (eventName) => ['4*100', '4?100', '4x100', '4*200', '4?200', '4x200', '4*400', '4?400', '4x400', '接力', 'relay'].some((keyword) => normalizeEventName(eventName).includes(String(keyword).toLowerCase()));
+
+const rowsUseTeamCode = (rows) => Array.isArray(rows) && rows.some((row) => String(row?.student_id || '').startsWith('TEAM_'));
+
+const identityColumnLabel = (eventName, rows = []) => ((rowsUseTeamCode(rows) || isRelayEvent(eventName)) ? '队伍编号' : '学号');
+
 const groupGenderText = (gender) => {
   if (gender === '') return '';
   if (gender === '') return '';
@@ -552,6 +586,42 @@ const groupGenderText = (gender) => {
   return '';
 };
 
+const formatGroupResultTitle = (group) => {
+  const roundText = getRoundLabel(groupQuery.round || groupForm.round);
+  const groupText = group?.label ? `${group.label}组` : '';
+  return [roundText, group?.event || '', groupText].filter(Boolean).join('-');
+};
+
+const formatRosterGroupLabel = (label) => {
+  if (!label) return '未分组';
+  const text = String(label).trim();
+  return text.endsWith('组') ? text : `${text}组`;
+};
+
+const resultsRosterGroups = computed(() => {
+  const bucket = new Map();
+  for (const row of roster.value || []) {
+    const key = String(row?.group_label || '');
+    if (!bucket.has(key)) {
+      bucket.set(key, []);
+    }
+    bucket.get(key).push(row);
+  }
+
+  return Array.from(bucket.entries())
+    .sort((a, b) => {
+      const labelA = String(a[0] || '');
+      const labelB = String(b[0] || '');
+      if (!labelA && labelB) return 1;
+      if (labelA && !labelB) return -1;
+      return labelA.localeCompare(labelB, undefined, { numeric: true });
+    })
+    .map(([label, rows]) => ({
+      label,
+      displayLabel: formatRosterGroupLabel(label),
+      rows,
+    }));
+});
 
 const toggleResultsMenu = () => {
   resultsMenuOpen.value = !resultsMenuOpen.value;
@@ -568,8 +638,8 @@ const openResultsQuery = () => {
   active.value = 'results-query';
 };
 
-const resultForm = reactive({ event: '', round: 'final' });
-const resultsQuery = reactive({ event: '', name: '', student_id: '', round: '' });
+const resultForm = reactive({ event: '', gender: '', round: 'final', unit: '秒' });
+const resultsQuery = reactive({ event: '', college: '', name: '', student_id: '', round: '' });
 
 
 const normalizeEventName = (eventName) => {
@@ -780,7 +850,7 @@ const confirmGroups = async () => {
       ? groupedResults.value.flatMap((item) => item.rows)
       : groups.value;
     if (!allRows.length) {
-      groupMessage.value = '';
+      groupMessage.value = '暂无可保存的分组结果';
       window.alert(groupMessage.value);
       return;
     }
@@ -796,14 +866,15 @@ const confirmGroups = async () => {
     await api.post('/groups/confirm', {
       event: groupForm.event,
       round: groupForm.round,
+      gender: groupForm.gender,
       groups: payloadGroups,
     });
     groups.value = [];
     selectedGroupLabel.value = '';
-    groupMessage.value = '';
+    groupMessage.value = '分组保存成功';
     window.alert(groupMessage.value);
   } catch (error) {
-    groupMessage.value = '';
+    groupMessage.value = error?.response?.data?.detail || '分组保存失败';
     window.alert(groupMessage.value);
   }
 };
@@ -822,9 +893,12 @@ const buildGroupExportUrl = (path) => {
 
 const exportGroupsTemplate = () => window.open(buildGroupExportUrl('/export/groups-template'), '_blank');
 const exportGroups = () => window.open(buildGroupExportUrl('/export/groups'), '_blank');
-
 const queryGroupCandidates = async () => {
-  if (!groupForm.event) return;
+  if (!groupForm.event || !groupForm.gender) {
+    groupMessage.value = !groupForm.event ? '请先选择项目' : '请先选择性别';
+    window.alert(groupMessage.value);
+    return;
+  }
   groupMessage.value = '';
   const { data } = await api
     .get('/groups/candidates', {
@@ -878,6 +952,7 @@ const exportResults = () => {
   const params = new URLSearchParams();
   const exportEvent = resultsQuery.event || resultForm.event;
   if (exportEvent) params.set('event', exportEvent);
+  if (resultsQuery.college) params.set('college', resultsQuery.college);
   if (resultsQuery.name) params.set('name', resultsQuery.name);
   if (resultsQuery.student_id) params.set('student_id', resultsQuery.student_id);
   if (resultsQuery.round) params.set('round', resultsQuery.round);
@@ -935,6 +1010,7 @@ const formatDate = (date) => {
 const searchResults = async () => {
   const params = {};
   if (resultsQuery.event) params.event = resultsQuery.event;
+  if (resultsQuery.college) params.college = resultsQuery.college;
   if (resultsQuery.name) params.name = resultsQuery.name;
   if (resultsQuery.student_id) params.student_id = resultsQuery.student_id;
   if (resultsQuery.round) params.round = resultsQuery.round;
@@ -979,27 +1055,27 @@ const fetchEventOptions = async () => {
 };
 
 const queryRoster = async () => {
-  if (!resultForm.event) return;
+  if (!resultForm.event || !resultForm.gender) {
+    roster.value = [];
+    resultMessage.value = !resultForm.event ? '请先选择项目' : '请先选择性别';
+    window.alert(resultMessage.value);
+    return;
+  }
   resultMessage.value = '';
 
   const fetchGroupRows = async (roundValue) => {
-    const params = { event: resultForm.event, round: roundValue };
+    const params = { event: resultForm.event, gender: resultForm.gender, round: roundValue };
     const resp = await api.get('/groups', { params }).catch(() => ({ data: [] }));
     return resp.data || [];
   };
 
-  let groupRows = await fetchGroupRows(resultForm.round);
-  if (!groupRows.length && resultForm.round === 'final') {
-    // Final usually comes from finalists; fallback to one/prelim roster for data entry.
-    groupRows = await fetchGroupRows('one');
-    if (!groupRows.length) {
-      groupRows = await fetchGroupRows('prelim');
-    }
-  }
+  const groupRows = await fetchGroupRows(resultForm.round);
 
   if (!groupRows.length) {
     roster.value = [];
-    resultMessage.value = '\u672a\u627e\u5230\u53ef\u5f55\u5165\u6210\u7ee9\u7684\u5206\u7ec4\u540d\u5355';
+    resultMessage.value = resultForm.round === 'final'
+      ? '\u672a\u627e\u5230\u51b3\u8d5b\u5206\u7ec4\u540d\u5355\uff0c\u8bf7\u5148\u5728\u5206\u7ec4\u7ba1\u7406\u4e2d\u5b8c\u6210\u51b3\u8d5b\u5206\u7ec4'
+      : '\u672a\u627e\u5230\u53ef\u5f55\u5165\u6210\u7ee9\u7684\u5206\u7ec4\u540d\u5355';
     window.alert(resultMessage.value);
     return;
   }
@@ -1010,6 +1086,8 @@ const queryRoster = async () => {
     name: row.name,
     student_id: row.student_id,
     event: row.event,
+    group_label: row.group_label,
+    lane: row.lane,
   }));
 
   const resultsData = await api
@@ -1025,19 +1103,27 @@ const queryRoster = async () => {
     round === 'prelim' || round === 'semi' ? `prelim_attempt${idx}` : `final_attempt${idx}`
   );
 
-  roster.value = (rosterSource || []).map((row) => {
-    const matched = resultMap.get(row.student_id);
-    return {
-      ...row,
-      inputScore: matched?.score ?? row.score ?? '',
-      inputUnit: '',
-      attempt1: matched ? (matched[attemptField(resultForm.round, 1)] ?? '') : '',
-      attempt2: matched ? (matched[attemptField(resultForm.round, 2)] ?? '') : '',
-      attempt3: matched ? (matched[attemptField(resultForm.round, 3)] ?? '') : '',
-      rank: matched?.rank ?? row.rank ?? '',
-      date: matched?.date ?? '',
-    };
-  });
+  roster.value = (rosterSource || [])
+    .map((row) => {
+      const matched = resultMap.get(row.student_id);
+      return {
+        ...row,
+        inputScore: matched?.score ?? row.score ?? '',
+        attempt1: matched ? (matched[attemptField(resultForm.round, 1)] ?? '') : '',
+        attempt2: matched ? (matched[attemptField(resultForm.round, 2)] ?? '') : '',
+        attempt3: matched ? (matched[attemptField(resultForm.round, 3)] ?? '') : '',
+        rank: matched?.rank ?? row.rank ?? '',
+        date: matched?.date ?? '',
+      };
+    })
+    .sort((rowA, rowB) => {
+      const groupCompare = String(rowA?.group_label || '').localeCompare(String(rowB?.group_label || ''), undefined, { numeric: true });
+      if (groupCompare !== 0) return groupCompare;
+      const laneA = rowA?.lane ?? 999;
+      const laneB = rowB?.lane ?? 999;
+      if (laneA !== laneB) return laneA - laneB;
+      return String(rowA?.name || '').localeCompare(String(rowB?.name || ''));
+    });
   resultsQuery.event = resultForm.event;
 };
 
@@ -1116,6 +1202,21 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(3, minmax(90px, 1fr));
   gap: 8px;
+}
+.score-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.unit-badge {
+  min-width: 48px;
+  padding: 6px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #24292f;
+  text-align: center;
+  white-space: nowrap;
 }
 
 

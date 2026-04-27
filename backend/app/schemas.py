@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field
 
@@ -69,6 +69,7 @@ class GroupItem(BaseModel):
 class GroupConfirmRequest(BaseModel):
     event: str
     round: str
+    gender: Optional[str] = None
     groups: List[GroupItem]
 
 

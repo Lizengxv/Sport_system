@@ -4,6 +4,7 @@
 
 import os
 import hashlib
+import re
 
 
 
@@ -556,6 +557,17 @@ def is_relay_event(event_name: str) -> bool:
     return any(keyword in value for keyword in relay_keywords)
 
 
+def is_long_distance_track_event(event_name: Optional[str]) -> bool:
+    if not event_name or classify_event_table(event_name) != "track" or is_relay_event(event_name):
+        return False
+    value = normalize_event_name(event_name)
+    match = re.search(r"(\d+)", value)
+    if not match:
+        return False
+    meters = int(match.group(1))
+    return meters > 800
+
+
 def build_relay_storage_student_id(event_name: str, name: str, gender: str = "") -> str:
     raw_key = f"{normalize_event_name(event_name)}|{(name or '').strip()}|{(gender or '').strip()}"
     digest = hashlib.sha1(raw_key.encode("utf-8")).hexdigest()[:20].upper()
@@ -641,7 +653,7 @@ def rank_distance_event(event_name: str, round_value: str, db: Session):
 
 
 
-def list_distance_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, db: Session):
+def list_distance_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, gender: str | None, db: Session):
     query = select(ResultDistance).where(ResultDistance.event == event_name)
     if college:
         query = query.where(ResultDistance.college == college)
@@ -649,6 +661,15 @@ def list_distance_results(event_name: str, round_value: str | None, college: str
         query = query.where(ResultDistance.name == name)
     if student_id:
         query = query.where(ResultDistance.student_id == student_id)
+    if gender:
+        athlete_query = select(Athlete.student_id).where(
+            Athlete.event == event_name,
+            Athlete.gender.in_(gender_filter_values(gender)),
+        )
+        student_ids = [row[0] for row in db.execute(athlete_query).all()]
+        if not student_ids:
+            return []
+        query = query.where(ResultDistance.student_id.in_(student_ids))
     rows = db.scalars(query).all()
 
     athlete_map = {}
@@ -723,7 +744,7 @@ def list_distance_results(event_name: str, round_value: str | None, college: str
     return payload
 
 
-def list_jump_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, db: Session):
+def list_jump_results(event_name: str, round_value: str | None, college: str | None, name: str | None, student_id: str | None, gender: str | None, db: Session):
     query = select(ResultJump).where(ResultJump.event == event_name)
     if college:
         query = query.where(ResultJump.college == college)
@@ -731,6 +752,15 @@ def list_jump_results(event_name: str, round_value: str | None, college: str | N
         query = query.where(ResultJump.name == name)
     if student_id:
         query = query.where(ResultJump.student_id == student_id)
+    if gender:
+        athlete_query = select(Athlete.student_id).where(
+            Athlete.event == event_name,
+            Athlete.gender.in_(gender_filter_values(gender)),
+        )
+        student_ids = [row[0] for row in db.execute(athlete_query).all()]
+        if not student_ids:
+            return []
+        query = query.where(ResultJump.student_id.in_(student_ids))
     if round_value:
         query = query.where(ResultJump.round == round_value)
     rows = db.scalars(query).all()
@@ -765,6 +795,7 @@ def list_jump_results(event_name: str, round_value: str | None, college: str | N
 
 def list_track_results(
     event: Optional[str],
+    gender: Optional[str],
     college: Optional[str],
     name: Optional[str],
     student_id: Optional[str],
@@ -780,6 +811,15 @@ def list_track_results(
         query = query.where(Result.name == name)
     if student_id:
         query = query.where(Result.student_id == student_id)
+    if gender:
+        athlete_query = select(Athlete.student_id)
+        if event:
+            athlete_query = athlete_query.where(Athlete.event == event)
+        athlete_query = athlete_query.where(Athlete.gender.in_(gender_filter_values(gender)))
+        student_ids = [row[0] for row in db.execute(athlete_query).all()]
+        if not student_ids:
+            return []
+        query = query.where(Result.student_id.in_(student_ids))
     if round_value:
         query = query.where(Result.round == round_value)
     rows = db.scalars(query).all()
@@ -971,33 +1011,121 @@ def get_timestamp():
 
 
 
-def build_results_template_filename(event: Optional[str], timestamp: str) -> str:
-
-
-
+def build_results_template_filename(event: Optional[str], timestamp: str, gender: Optional[str] = None) -> str:
     label = (event or "results").strip() or "results"
-
-
-
+    gender_label = _gender_filename_label(gender)
+    if gender_label:
+        label = f"{label}_{gender_label}"
     label = label.replace("*", "×")
-
-
-
     for ch in '\\/:?"<>|':
-
-
-
         label = label.replace(ch, "_")
-
-
-
     label = label.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-
-
-
     return f"{label}_template_{timestamp}.xlsx"
 
 
+def _format_export_date(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _round_display_text(round_value: Optional[str]) -> str:
+    mapping = {
+        "prelim": "\u9884\u8d5b",
+        "semi": "\u534a\u51b3\u8d5b",
+        "final": "\u51b3\u8d5b",
+        "one": "\u4e00\u8f6e\u6b21",
+    }
+    return mapping.get((round_value or "").lower(), round_value or "")
+
+
+def _gender_filename_label(gender: Optional[str]) -> str:
+    raw = (gender or "").strip()
+    text = raw.lower()
+    if not text:
+        return ""
+    if "\u7537" in raw or text in {"male", "m", "man", "men"}:
+        return "\u7537"
+    if "\u5973" in raw or text in {"female", "f", "woman", "women"}:
+        return "\u5973"
+    if "\u6df7" in raw or text in {"mixed", "mix"}:
+        return "\u6df7\u5408"
+    return raw
+
+
+def _gender_title_label(gender: Optional[str]) -> str:
+    raw = (gender or "").strip()
+    text = raw.lower()
+    if not text:
+        return ""
+    if "\u7537" in raw or text in {"male", "m", "man", "men"}:
+        return "\u7537\u5b50\u7ec4"
+    if "\u5973" in raw or text in {"female", "f", "woman", "women"}:
+        return "\u5973\u5b50\u7ec4"
+    if "\u6df7" in raw or text in {"mixed", "mix"}:
+        return "\u6df7\u5408\u7ec4"
+    return raw
+
+
+def _row_value(item, key: str, default=""):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _should_replace_result_payload(prev_row: Dict, new_row: Dict) -> bool:
+    prev_priority = _round_priority_for_ranking(prev_row.get("round"))
+    new_priority = _round_priority_for_ranking(new_row.get("round"))
+    if new_priority != prev_priority:
+        return new_priority > prev_priority
+    prev_date = prev_row.get("date") or datetime.min
+    new_date = new_row.get("date") or datetime.min
+    return new_date >= prev_date
+
+
+def _pick_export_rows_by_student(rows: List[Dict]) -> Dict[str, Dict]:
+    picked: Dict[str, Dict] = {}
+    for row in rows:
+        student_key = str(row.get("student_id") or "").strip()
+        if not student_key:
+            continue
+        prev = picked.get(student_key)
+        if prev is None or _should_replace_result_payload(prev, row):
+            picked[student_key] = row
+    return picked
+
+
+def _merge_template_athletes(athletes: List[Athlete], rows: List[Dict]) -> List:
+    merged = list(athletes)
+    existing = {str(_row_value(item, "student_id", "")).strip() for item in merged}
+    for row in rows:
+        student_key = str(row.get("student_id") or "").strip()
+        if not student_key or student_key in existing:
+            continue
+        merged.append(
+            {
+                "student_id": student_key,
+                "name": row.get("name", ""),
+                "college": row.get("college", ""),
+            }
+        )
+        existing.add(student_key)
+    return merged
+
+
+def _build_excel_stream_response(output: io.BytesIO, filename: str) -> StreamingResponse:
+    safe_name = filename.encode("ascii", "ignore").decode("ascii") or "export.xlsx"
+    encoded_name = urllib.parse.quote(filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename={safe_name}; filename*=UTF-8''{encoded_name}"
+    }
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 def to_dict(obj):
@@ -1982,6 +2110,7 @@ def list_group_candidates(
 
 def list_results(
     event: Optional[str] = None,
+    gender: Optional[str] = None,
     college: Optional[str] = None,
     name: Optional[str] = None,
     student_id: Optional[str] = None,
@@ -1991,21 +2120,21 @@ def list_results(
     if event:
         kind = classify_event_table(event)
         if kind == "distance" or has_distance_records(event, db):
-            return list_distance_results(event, round, college, name, student_id, db)
+            return list_distance_results(event, round, college, name, student_id, gender, db)
         if kind == "jump" or has_jump_records(event, db):
-            return list_jump_results(event, round, college, name, student_id, db)
-        return list_track_results(event, college, name, student_id, round, db)
+            return list_jump_results(event, round, college, name, student_id, gender, db)
+        return list_track_results(event, gender, college, name, student_id, round, db)
 
     merged = []
-    merged.extend(list_track_results(None, college, name, student_id, round, db))
+    merged.extend(list_track_results(None, gender, college, name, student_id, round, db))
 
     distance_events = [row[0] for row in db.execute(select(distinct(ResultDistance.event))).all() if row[0]]
     for event_name in distance_events:
-        merged.extend(list_distance_results(event_name, round, college, name, student_id, db))
+        merged.extend(list_distance_results(event_name, round, college, name, student_id, gender, db))
 
     jump_events = [row[0] for row in db.execute(select(distinct(ResultJump.event))).all() if row[0]]
     for event_name in jump_events:
-        merged.extend(list_jump_results(event_name, round, college, name, student_id, db))
+        merged.extend(list_jump_results(event_name, round, college, name, student_id, gender, db))
 
     round_order = {"prelim": 0, "semi": 1, "final": 2, "one": 3}
     merged.sort(
@@ -2410,71 +2539,133 @@ def export_events(db: Session = Depends(get_db)):
 @app.get("/export/results")
 def export_results(
     event: Optional[str] = None,
+    gender: Optional[str] = None,
     college: Optional[str] = None,
     name: Optional[str] = None,
     student_id: Optional[str] = None,
     round: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    rows = list_results(event=event, college=college, name=name, student_id=student_id, round=round, db=db)
+    if not event:
+        raise HTTPException(status_code=400, detail="请先选择项目后再导出")
 
-    def format_export_date(value):
-        if not value:
-            return ""
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d %H:%M:%S")
-        return str(value)
+    rows = list_results(event=event, gender=gender, college=college, name=name, student_id=student_id, round=round, db=db)
 
-    data = [
-        {
-            "\u9879\u76ee": row.get("event", ""),
-            "\u59d3\u540d": row.get("name", ""),
-            "\u5b66\u53f7": row.get("student_id", ""),
-            "\u5b66\u9662": row.get("college", ""),
-            "\u6210\u7ee9": row.get("score", "") if row.get("score") is not None else "",
-            "\u6392\u540d": row.get("rank", "") if row.get("rank") is not None else "",
-            "\u8f6e\u6b21": row.get("round", ""),
-            "\u65e5\u671f": format_export_date(row.get("date")),
-        }
-        for row in rows
-    ]
-    timestamp = get_timestamp()
-    return excel_response(data, f"results_{timestamp}.xlsx")
+    athletes = _list_template_athletes(
+        event,
+        db,
+        gender=gender,
+        college=college,
+        name=name,
+        student_id=student_id,
+    )
+    athletes = _merge_template_athletes(athletes, rows)
+    filename = build_results_template_filename(event, get_timestamp(), gender)
+    event_kind = classify_event_table(event)
+
+    if event_kind == "jump":
+        output = _build_jump_results_template_stream(
+            athletes,
+            _pick_export_rows_by_student(rows),
+        )
+        return _build_excel_stream_response(output, filename)
+
+    if event_kind == "distance":
+        output = _build_field_results_template_stream(
+            athletes,
+            _pick_export_rows_by_student(rows),
+            round,
+        )
+        return _build_excel_stream_response(output, filename)
+
+    result_by_student = _pick_export_rows_by_student(rows)
+    selected_student_ids = set(result_by_student.keys())
+    group_rows, template_round = _list_template_groupings(event, round, db, gender=gender)
+    if selected_student_ids:
+        group_rows = [row for row in group_rows if row.student_id in selected_student_ids]
+    output = _build_track_results_template_stream(
+        event,
+        group_rows,
+        athletes,
+        result_by_student=result_by_student,
+        round_value=template_round or round,
+        gender=gender,
+    )
+    return _build_excel_stream_response(output, filename)
 
 
-def _list_template_athletes(event: Optional[str], db: Session) -> List[Athlete]:
+def _list_template_athletes(
+    event: Optional[str],
+    db: Session,
+    gender: Optional[str] = None,
+    college: Optional[str] = None,
+    name: Optional[str] = None,
+    student_id: Optional[str] = None,
+) -> List[Athlete]:
     query = select(Athlete)
     if event:
         query = query.where(Athlete.event == event)
+    if gender:
+        query = query.where(Athlete.gender.in_(gender_filter_values(gender)))
+    if college:
+        query = query.where(Athlete.college == college)
+    if name:
+        query = query.where(Athlete.name == name)
+    if student_id:
+        query = query.where(Athlete.student_id == student_id)
     query = query.order_by(Athlete.college.asc(), Athlete.name.asc(), Athlete.student_id.asc())
     return db.scalars(query).all()
 
 
-def _list_template_groupings(event: Optional[str], round_value: Optional[str], db: Session) -> List[Grouping]:
+def _list_template_groupings(
+    event: Optional[str],
+    round_value: Optional[str],
+    db: Session,
+    gender: Optional[str] = None,
+) -> tuple[List[Grouping], Optional[str]]:
     query = select(Grouping)
     if event:
         query = query.where(Grouping.event == event)
 
     rows = db.scalars(query).all()
     if not rows:
-        return []
+        return [], None
 
+    if gender:
+        athlete_query = select(Athlete.student_id)
+        if event:
+            athlete_query = athlete_query.where(Athlete.event == event)
+        athlete_query = athlete_query.where(Athlete.gender.in_(gender_filter_values(gender)))
+        student_ids = {row[0] for row in db.execute(athlete_query).all()}
+        if not student_ids:
+            return [], None
+        rows = [row for row in rows if row.student_id in student_ids]
+        if not rows:
+            return [], None
+
+    selected_round = round_value
     if round_value:
-        rows = [row for row in rows if row.round == round_value]
-    else:
+        exact_rows = [row for row in rows if row.round == round_value]
+        if exact_rows:
+            rows = exact_rows
+        else:
+            selected_round = None
+
+    if not selected_round:
         round_priority = {"prelim": 1, "semi": 2, "one": 3, "final": 4}
         best_round = max(rows, key=lambda row: round_priority.get((row.round or "").lower(), 0)).round
         rows = [row for row in rows if row.round == best_round]
+        selected_round = best_round
 
     rows.sort(
         key=lambda row: (
-            str(row.group_label or ""),
+            _group_label_sort_value(row.group_label or ""),
             row.lane if row.lane is not None else 999,
             str(row.name or ""),
             str(row.student_id or ""),
         )
     )
-    return rows
+    return rows, selected_round
 
 
 TEMPLATE_FONT_NAME = "SimSun"
@@ -2490,7 +2681,11 @@ def _apply_uniform_template_font(ws, min_row: int, max_row: int, min_col: int, m
             cell.font = font
 
 
-def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
+def _build_jump_results_template_stream(
+    athletes: List[Athlete],
+    result_by_student: Optional[Dict[str, Dict]] = None,
+) -> io.BytesIO:
+    result_by_student = result_by_student or {}
     template_path = os.path.join(os.path.dirname(__file__), "templates", "results_jump_style_template.xlsx")
     using_template = os.path.exists(template_path)
     if using_template:
@@ -2507,26 +2702,31 @@ def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
         if merge_range not in existing_merges:
             ws.merge_cells(merge_range)
 
-    for col in range(4, 34, 3):  # D..AG every 3 columns
+    for col in range(4, 34, 3):
         start_col = get_column_letter(col)
         end_col = get_column_letter(col + 2)
         merge_range = f"{start_col}2:{end_col}2"
         if merge_range not in existing_merges:
             ws.merge_cells(merge_range)
 
-    ws["A1"] = "序号"
-    ws["B1"] = "姓名"
-    ws["C1"] = "学院"
-    ws["D1"] = "高度"
-    ws["AH1"] = "成绩"
-    ws["AI1"] = "名词"
-    ws["AJ1"] = "备注"
+    ws["A1"] = "\u5e8f\u53f7"
+    ws["B1"] = "\u59d3\u540d"
+    ws["C1"] = "\u5b66\u9662"
+    ws["D1"] = "\u9ad8\u5ea6"
+    ws["AH1"] = "\u6210\u7ee9"
+    ws["AI1"] = "\u540d\u8bcd"
+    ws["AJ1"] = "\u5907\u6ce8"
 
     for idx, athlete in enumerate(athletes, start=1):
         row_idx = idx + 2
+        student_key = str(_row_value(athlete, "student_id", "")).strip()
+        result_item = result_by_student.get(student_key, {})
         ws.cell(row=row_idx, column=1, value=idx)
-        ws.cell(row=row_idx, column=2, value=athlete.name)
-        ws.cell(row=row_idx, column=3, value=athlete.college)
+        ws.cell(row=row_idx, column=2, value=_row_value(athlete, "name", ""))
+        ws.cell(row=row_idx, column=3, value=_row_value(athlete, "college", ""))
+        ws.cell(row=row_idx, column=34, value=result_item.get("score") if result_item.get("score") is not None else "")
+        ws.cell(row=row_idx, column=35, value=result_item.get("rank") if result_item.get("rank") is not None else "")
+        ws.cell(row=row_idx, column=36, value="")
 
     if not using_template:
         thin = Side(style="thin", color="000000")
@@ -2545,14 +2745,13 @@ def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
         ws.column_dimensions["A"].width = 8
         ws.column_dimensions["B"].width = 12
         ws.column_dimensions["C"].width = 16
-        for c in range(4, 34):  # D..AG
+        for c in range(4, 34):
             ws.column_dimensions[get_column_letter(c)].width = 4.6
         ws.column_dimensions["AH"].width = 10
         ws.column_dimensions["AI"].width = 10
-        ws.column_dimensions["AJ"].width = 14
+        ws.column_dimensions["AJ"].width = 18
         ws.freeze_panes = "A3"
         ws.print_area = f"A1:AJ{max_rows}"
-
 
     max_rows = max(ws.max_row, len(athletes) + 2, 77 if not using_template else 0)
     _apply_uniform_template_font(ws, 1, max_rows, 1, 36)
@@ -2563,7 +2762,12 @@ def _build_jump_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
     return output
 
 
-def _build_field_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
+def _build_field_results_template_stream(
+    athletes: List[Athlete],
+    result_by_student: Optional[Dict[str, Dict]] = None,
+    round_value: Optional[str] = None,
+) -> io.BytesIO:
+    result_by_student = result_by_student or {}
     template_path = os.path.join(
         os.path.dirname(__file__),
         "templates",
@@ -2594,27 +2798,60 @@ def _build_field_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
         if merge_range not in existing_merges:
             ws.merge_cells(merge_range)
 
-    ws["A1"] = "号码"
-    ws["B1"] = "姓名"
-    ws["C1"] = "学院"
-    ws["D1"] = "预赛"
-    ws["G1"] = "预赛最优"
-    ws["H1"] = "决赛"
-    ws["K1"] = "决赛最优"
-    ws["L1"] = "备注"
-    ws["M1"] = "名词"
-    ws["D2"] = "第一次"
-    ws["E2"] = "第二次"
-    ws["F2"] = "第三次"
-    ws["H2"] = "第一次"
-    ws["I2"] = "第二次"
-    ws["J2"] = "第三次"
+    ws["A1"] = "\u53f7\u7801"
+    ws["B1"] = "\u59d3\u540d"
+    ws["C1"] = "\u5b66\u9662"
+    ws["D1"] = "\u9884\u8d5b"
+    ws["G1"] = "\u9884\u8d5b\u6700\u4f18"
+    ws["H1"] = "\u51b3\u8d5b"
+    ws["K1"] = "\u51b3\u8d5b\u6700\u4f18"
+    ws["L1"] = "\u5907\u6ce8"
+    ws["M1"] = "\u540d\u8bcd"
+    ws["D2"] = "\u7b2c\u4e00\u6b21"
+    ws["E2"] = "\u7b2c\u4e8c\u6b21"
+    ws["F2"] = "\u7b2c\u4e09\u6b21"
+    ws["H2"] = "\u7b2c\u4e00\u6b21"
+    ws["I2"] = "\u7b2c\u4e8c\u6b21"
+    ws["J2"] = "\u7b2c\u4e09\u6b21"
+
+    show_prelim = round_value in {None, "prelim"}
+    show_final = round_value in {None, "final"}
 
     for idx, athlete in enumerate(athletes, start=1):
         row_idx = idx + 2
+        student_key = str(_row_value(athlete, "student_id", "")).strip()
+        result_item = result_by_student.get(student_key, {})
         ws.cell(row=row_idx, column=1, value=idx)
-        ws.cell(row=row_idx, column=2, value=athlete.name)
-        ws.cell(row=row_idx, column=3, value=athlete.college)
+        ws.cell(row=row_idx, column=2, value=_row_value(athlete, "name", ""))
+        ws.cell(row=row_idx, column=3, value=_row_value(athlete, "college", ""))
+
+        prelim_values = [
+            result_item.get("prelim_attempt1"),
+            result_item.get("prelim_attempt2"),
+            result_item.get("prelim_attempt3"),
+            result_item.get("prelim_best"),
+        ]
+        final_values = [
+            result_item.get("final_attempt1"),
+            result_item.get("final_attempt2"),
+            result_item.get("final_attempt3"),
+            result_item.get("final_best"),
+        ]
+        if show_prelim:
+            for offset, value in enumerate(prelim_values, start=4):
+                ws.cell(row=row_idx, column=offset, value=value if value is not None else "")
+        else:
+            for offset in range(4, 8):
+                ws.cell(row=row_idx, column=offset, value="")
+        if show_final:
+            for offset, value in enumerate(final_values, start=8):
+                ws.cell(row=row_idx, column=offset, value=value if value is not None else "")
+        else:
+            for offset in range(8, 12):
+                ws.cell(row=row_idx, column=offset, value="")
+
+        ws.cell(row=row_idx, column=12, value="")
+        ws.cell(row=row_idx, column=13, value=result_item.get("rank") if result_item.get("rank") is not None else "")
 
     if not using_template:
         thin = Side(style="thin", color="000000")
@@ -2645,13 +2882,53 @@ def _build_field_results_template_stream(athletes: List[Athlete]) -> io.BytesIO:
     return output
 
 
+def _to_chinese_group_number(value: int) -> str:
+    digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+    if value <= 0:
+        return ""
+    if value < 10:
+        return digits[value]
+    if value == 10:
+        return "十"
+    if value < 20:
+        return "十" + digits[value % 10]
+    if value < 100:
+        tens = value // 10
+        ones = value % 10
+        return digits[tens] + "十" + (digits[ones] if ones else "")
+    return str(value)
+
+
+def _display_group_label(group_label: str) -> str:
+    text = str(group_label or "").strip().replace("组", "")
+    if not text:
+        return ""
+    if len(text) == 1 and "A" <= text.upper() <= "Z":
+        return _to_chinese_group_number(ord(text.upper()) - ord("A") + 1)
+    if text.isdigit():
+        return _to_chinese_group_number(int(text))
+    return text
+
+
+def _group_label_sort_value(group_label: str) -> int:
+    text = _display_group_label(group_label)
+    if not text:
+        return 999
+    digit_map = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if text in digit_map:
+        return digit_map[text]
+    if text == "十":
+        return 10
+    if "十" in text:
+        left, right = text.split("十", 1)
+        tens = digit_map.get(left, 1 if left == "" else 0)
+        ones = digit_map.get(right, 0 if right == "" else 0)
+        return tens * 10 + ones
+    return 999
+
+
 def _index_to_group_label(index: int) -> str:
-    label = ""
-    current = index + 1
-    while current > 0:
-        current, remainder = divmod(current - 1, 26)
-        label = chr(ord("A") + remainder) + label
-    return f"{label}组"
+    return f"{_to_chinese_group_number(index + 1)}\u7ec4"
 
 
 def _build_track_results_template_groups(group_rows: List[Grouping], athletes: List[Athlete]) -> List[Dict]:
@@ -2662,10 +2939,10 @@ def _build_track_results_template_groups(group_rows: List[Grouping], athletes: L
             grouped.setdefault(source_label, []).append(row)
         return [
             {
-                "label": _index_to_group_label(index),
+                "label": f"{_display_group_label(source_label)}\u7ec4",
                 "rows": rows,
             }
-            for index, (_, rows) in enumerate(sorted(grouped.items(), key=lambda item: item[0]))
+            for source_label, rows in sorted(grouped.items(), key=lambda item: (_group_label_sort_value(item[0]), str(item[0])))
         ]
 
     fallback_groups: List[Dict] = []
@@ -2676,8 +2953,9 @@ def _build_track_results_template_groups(group_rows: List[Grouping], athletes: L
                 "label": _index_to_group_label(len(fallback_groups)),
                 "rows": [
                     {
-                        "name": athlete.name,
-                        "college": athlete.college,
+                        "student_id": _row_value(athlete, "student_id", ""),
+                        "name": _row_value(athlete, "name", ""),
+                        "college": _row_value(athlete, "college", ""),
                         "lane": lane_idx + 1,
                     }
                     for lane_idx, athlete in enumerate(chunk)
@@ -2688,7 +2966,138 @@ def _build_track_results_template_groups(group_rows: List[Grouping], athletes: L
     return fallback_groups or [{"label": _index_to_group_label(0), "rows": []}]
 
 
-def _build_track_results_template_stream(event: Optional[str], group_rows: List[Grouping], athletes: List[Athlete]) -> io.BytesIO:
+LONG_DISTANCE_TRACK_FOOTER_TEXT = "总裁判：             裁判长：                裁判员：               记录员："
+
+
+def _numeric_group_label_text(group_label: str, fallback_index: int) -> str:
+    order = _group_label_sort_value(group_label)
+    if order != 999:
+        return str(order)
+    raw_text = str(group_label or "").strip().replace("组", "")
+    return raw_text or str(fallback_index + 1)
+
+
+def _build_long_distance_track_results_template_stream(
+    event: Optional[str],
+    group_rows: List[Grouping],
+    athletes: List[Athlete],
+    result_by_student: Optional[Dict[str, Dict]] = None,
+    round_value: Optional[str] = None,
+    gender: Optional[str] = None,
+) -> io.BytesIO:
+    result_by_student = result_by_student or {}
+    groups = _build_track_results_template_groups(group_rows, athletes)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "long_distance_template"
+
+    ws.column_dimensions["A"].width = 10
+    for col_idx in range(2, 10):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 14
+
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    block_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    title_align = Alignment(horizontal="center", vertical="center", wrap_text=False, shrink_to_fit=True)
+
+    current_row = 1
+    event_text = (event or "长跑项目").strip() or "长跑项目"
+    round_text = _round_display_text(round_value)
+    gender_text = _gender_title_label(gender)
+    title_prefix = f"{gender_text}{event_text}{round_text}计时表" if round_text else f"{gender_text}{event_text}计时表"
+
+    for group_index, group in enumerate(groups):
+        group_text = str(group.get("label") or _index_to_group_label(group_index)).strip() or _index_to_group_label(group_index)
+        group_number_text = _numeric_group_label_text(group_text, group_index)
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=9)
+        title_cell = ws.cell(current_row, 1)
+        title_cell.value = f"{title_prefix}                                   第{group_number_text}组"
+        title_cell.alignment = title_align
+        ws.row_dimensions[current_row].height = 28
+
+        ordered_rows = sorted(
+            group.get("rows", []),
+            key=lambda row: (
+                _row_value(row, "lane", 9999) if isinstance(_row_value(row, "lane", None), int) else 9999,
+                str(_row_value(row, "name", "")),
+                str(_row_value(row, "student_id", "")),
+            ),
+        )
+        chunks = [ordered_rows[i : i + 8] for i in range(0, len(ordered_rows), 8)] or [[]]
+
+        for chunk_index, chunk in enumerate(chunks):
+            block_start = current_row + 1
+            labels = ["号码", "姓名", "单位", "成绩", "备注"]
+            values_by_row = [[] for _ in labels]
+
+            for item in chunk:
+                student_key = str(_row_value(item, "student_id", "")).strip()
+                result_item = result_by_student.get(student_key, {})
+                lane_value = _row_value(item, "lane", "")
+                values_by_row[0].append("" if lane_value is None else lane_value)
+                values_by_row[1].append(_row_value(item, "name", ""))
+                values_by_row[2].append(_row_value(item, "college", ""))
+                values_by_row[3].append(result_item.get("score") if result_item.get("score") is not None else "")
+                values_by_row[4].append("")
+
+            for row_offset, label in enumerate(labels):
+                row_number = block_start + row_offset
+                ws.row_dimensions[row_number].height = 24
+                label_cell = ws.cell(row_number, 1, label)
+                label_cell.border = border
+                label_cell.alignment = block_align
+                row_values = values_by_row[row_offset]
+                for col_offset in range(8):
+                    column_number = 2 + col_offset
+                    value = row_values[col_offset] if col_offset < len(row_values) else ""
+                    data_cell = ws.cell(row_number, column_number, value)
+                    data_cell.border = border
+                    data_cell.alignment = block_align
+
+            current_row = block_start + 4
+            if chunk_index < len(chunks) - 1:
+                current_row += 1
+                ws.row_dimensions[current_row].height = 10
+
+        current_row += 1
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=9)
+        footer_cell = ws.cell(current_row, 1, LONG_DISTANCE_TRACK_FOOTER_TEXT)
+        footer_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+        ws.row_dimensions[current_row].height = 24
+
+        if group_index < len(groups) - 1:
+            current_row += 1
+            ws.row_dimensions[current_row].height = 12
+            current_row += 1
+
+    _apply_uniform_template_font(ws, 1, ws.max_row, 1, 9)
+    ws.print_area = f"A1:I{ws.max_row}"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
+def _build_track_results_template_stream(
+    event: Optional[str],
+    group_rows: List[Grouping],
+    athletes: List[Athlete],
+    result_by_student: Optional[Dict[str, Dict]] = None,
+    round_value: Optional[str] = None,
+    gender: Optional[str] = None,
+) -> io.BytesIO:
+    if is_long_distance_track_event(event):
+        return _build_long_distance_track_results_template_stream(
+            event,
+            group_rows,
+            athletes,
+            result_by_student=result_by_student,
+            round_value=round_value,
+            gender=gender,
+        )
+
+    result_by_student = result_by_student or {}
     groups = _build_track_results_template_groups(group_rows, athletes)
     template_path = os.path.join(
         os.path.dirname(__file__),
@@ -2715,6 +3124,18 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
         footer_text = template_ws.cell(7, 1).value or ""
         footer_style = template_ws.cell(7, 1)
         title_style = template_ws.cell(1, 1)
+        lane_headers = [
+            "\u9053\u6b21",
+            "\u7b2c\u4e00\u9053",
+            "\u7b2c\u4e8c\u9053",
+            "\u7b2c\u4e09\u9053",
+            "\u7b2c\u56db\u9053",
+            "\u7b2c\u4e94\u9053",
+            "\u7b2c\u516d\u9053",
+            "\u7b2c\u4e03\u9053",
+            "\u7b2c\u516b\u9053",
+        ]
+        gender_text = _gender_title_label(gender)
 
         for block_idx, group in enumerate(groups):
             start_row = 1 + block_idx * 8
@@ -2749,13 +3170,21 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
             title_cell.font = copy(title_style.font)
             title_cell.fill = copy(title_style.fill)
             title_cell.border = copy(title_style.border)
-            title_cell.alignment = copy(title_style.alignment)
+            title_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False, shrink_to_fit=True)
             title_cell.number_format = title_style.number_format
             title_cell.protection = copy(title_style.protection)
 
             group_text = str(group.get("label") or _index_to_group_label(block_idx)).strip() or _index_to_group_label(block_idx)
-            event_text = (event or "径赛项目").strip() or "径赛项目"
-            title_cell.value = f"{event_text}计时表                                   {group_text}"
+            event_text = (event or "\u5f84\u8d5b\u9879\u76ee").strip() or "\u5f84\u8d5b\u9879\u76ee"
+            round_text = _round_display_text(round_value)
+            title_prefix = f"{event_text}{round_text}\u8ba1\u65f6\u8868" if round_text else f"{event_text}\u8ba1\u65f6\u8868"
+            group_display = _display_group_label(group_text)
+            ordinal_group_text = f"\u7b2c{group_display}\u7ec4" if group_display else group_text
+            title_parts = [part for part in [gender_text, title_prefix, ordinal_group_text] if part]
+            title_cell.value = "    ".join(title_parts)
+
+            for col_idx, header_value in enumerate(lane_headers, start=1):
+                ws.cell(start_row + 1, col_idx).value = header_value
 
             footer_cell = ws.cell(start_row + 6, 1)
             footer_cell._style = copy(footer_style._style)
@@ -2770,9 +3199,11 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
             used_columns = set()
             next_col = 2
             for row in group.get("rows", []):
-                lane = getattr(row, "lane", None) if hasattr(row, "lane") else row.get("lane")
-                name = getattr(row, "name", "") if hasattr(row, "name") else row.get("name", "")
-                college = getattr(row, "college", "") if hasattr(row, "college") else row.get("college", "")
+                lane = _row_value(row, "lane", None)
+                name = _row_value(row, "name", "")
+                college = _row_value(row, "college", "")
+                student_key = str(_row_value(row, "student_id", "")).strip()
+                result_item = result_by_student.get(student_key, {})
 
                 column = None
                 if isinstance(lane, int) and 1 <= lane <= 8:
@@ -2790,6 +3221,8 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
                 used_columns.add(column)
                 ws.cell(start_row + 2, column).value = name
                 ws.cell(start_row + 3, column).value = college
+                ws.cell(start_row + 4, column).value = result_item.get("score") if result_item.get("score") is not None else ""
+                ws.cell(start_row + 5, column).value = ""
 
             if block_idx < len(groups) - 1 and template_ws.row_dimensions[8].height is not None:
                 ws.row_dimensions[start_row + 7].height = template_ws.row_dimensions[8].height
@@ -2797,15 +3230,30 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
         wb = Workbook()
         ws = wb.active
         ws.title = "track_template"
-        headers = ["道次", "第1道", "第2道", "第3道", "第4道", "第5道", "第6道", "第7道", "第8道"]
-        labels = ["姓名", "单位", "成绩", "备注"]
+        headers = [
+            "\u9053\u6b21",
+            "\u7b2c\u4e00\u9053",
+            "\u7b2c\u4e8c\u9053",
+            "\u7b2c\u4e09\u9053",
+            "\u7b2c\u56db\u9053",
+            "\u7b2c\u4e94\u9053",
+            "\u7b2c\u516d\u9053",
+            "\u7b2c\u4e03\u9053",
+            "\u7b2c\u516b\u9053",
+        ]
+        labels = ["\u59d3\u540d", "\u5355\u4f4d", "\u6210\u7ee9", "\u5907\u6ce8"]
         thin = Side(style="thin", color="000000")
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
         align = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         ws.merge_cells("A1:I1")
-        ws["A1"] = (event or "径赛项目") + "计时表                                   A组"
-        ws["A1"].alignment = align
+        round_text = _round_display_text(round_value)
+        default_event_text = "\u5f84\u8d5b\u9879\u76ee"
+        title_prefix = f"{(event or default_event_text)}{round_text}\u8ba1\u65f6\u8868" if round_text else (event or default_event_text) + "\u8ba1\u65f6\u8868"
+        gender_text = _gender_title_label(gender)
+        title_parts = [part for part in [gender_text, title_prefix, "\u7b2c\u4e00\u7ec4"] if part]
+        ws["A1"] = "    ".join(title_parts)
+        ws["A1"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=False, shrink_to_fit=True)
 
         for i, h in enumerate(headers, start=1):
             cell = ws.cell(row=2, column=i, value=h)
@@ -2833,83 +3281,37 @@ def _build_track_results_template_stream(event: Optional[str], group_rows: List[
 
 
 @app.get("/export/results-template")
-def export_results_template(event: Optional[str] = None, round: Optional[str] = None, db: Session = Depends(get_db)):
-    athletes = _list_template_athletes(event, db)
+def export_results_template(
+    event: Optional[str] = None,
+    gender: Optional[str] = None,
+    round: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if not event:
+        raise HTTPException(status_code=400, detail="请先选择项目后再导出模板")
+
+    athletes = _list_template_athletes(event, db, gender=gender)
     event_kind = classify_event_table(event) if event else None
     if event_kind == "jump":
         output = _build_jump_results_template_stream(athletes)
         timestamp = get_timestamp()
-        filename = build_results_template_filename(event, timestamp)
-        safe_name = filename.encode("ascii", "ignore").decode("ascii") or "export.xlsx"
-        encoded_name = urllib.parse.quote(filename)
-        headers = {
-            "Content-Disposition": f"attachment; filename={safe_name}; filename*=UTF-8''{encoded_name}"
-        }
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers,
-        )
+        filename = build_results_template_filename(event, timestamp, gender)
+        return _build_excel_stream_response(output, filename)
 
     if event_kind == "distance":
         output = _build_field_results_template_stream(athletes)
         timestamp = get_timestamp()
-        filename = build_results_template_filename(event, timestamp)
-        safe_name = filename.encode("ascii", "ignore").decode("ascii") or "export.xlsx"
-        encoded_name = urllib.parse.quote(filename)
-        headers = {
-            "Content-Disposition": f"attachment; filename={safe_name}; filename*=UTF-8''{encoded_name}"
-        }
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers,
-        )
+        filename = build_results_template_filename(event, timestamp, gender)
+        return _build_excel_stream_response(output, filename)
 
     if event_kind == "track":
-        group_rows = _list_template_groupings(event, round, db)
-        output = _build_track_results_template_stream(event, group_rows, athletes)
+        group_rows, template_round = _list_template_groupings(event, round, db, gender=gender)
+        output = _build_track_results_template_stream(event, group_rows, athletes, round_value=template_round or round, gender=gender)
         timestamp = get_timestamp()
-        filename = build_results_template_filename(event, timestamp)
-        safe_name = filename.encode("ascii", "ignore").decode("ascii") or "export.xlsx"
-        encoded_name = urllib.parse.quote(filename)
-        headers = {
-            "Content-Disposition": f"attachment; filename={safe_name}; filename*=UTF-8''{encoded_name}"
-        }
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers,
-        )
+        filename = build_results_template_filename(event, timestamp, gender)
+        return _build_excel_stream_response(output, filename)
 
-    data = [
-        {
-            "\u9879\u76ee": event or row.event or "",
-            "\u59d3\u540d": row.name,
-            "\u5b66\u53f7": row.student_id,
-            "\u5b66\u9662": row.college,
-            "\u6210\u7ee9": "",
-            "\u6392\u540d": "",
-            "\u8f6e\u6b21": "",
-            "\u65e5\u671f": "",
-        }
-        for row in athletes
-    ]
-    if not data:
-        data = [
-            {
-                "\u9879\u76ee": event or "",
-                "\u59d3\u540d": "",
-                "\u5b66\u53f7": "",
-                "\u5b66\u9662": "",
-                "\u6210\u7ee9": "",
-                "\u6392\u540d": "",
-                "\u8f6e\u6b21": "",
-                "\u65e5\u671f": "",
-            }
-        ]
-    timestamp = get_timestamp()
-    return excel_response(data, build_results_template_filename(event, timestamp))
+    raise HTTPException(status_code=400, detail="当前项目暂不支持该模板导出")
 
 
 def _round_priority_for_ranking(round_value: str | None) -> int:
@@ -3020,6 +3422,8 @@ def _collect_ranking_records(db: Session) -> List[Dict]:
     track_map: Dict = {}
     for row in track_rows:
         if classify_event_table(row.event) != "track":
+            continue
+        if is_relay_event(row.event):
             continue
         key = (row.student_id, row.event)
         prev = track_map.get(key)
@@ -3275,13 +3679,14 @@ def export_college_rankings(db: Session = Depends(get_db)):
 
 def format_group_name(gender: str, group_label: str) -> str:
     value = (gender or "").strip().lower()
+    display_label = _display_group_label(group_label)
     male_labels = {"\u7537", "male", "\u7537\u5b50"}
     female_labels = {"\u5973", "female", "\u5973\u5b50"}
     if value in male_labels:
-        return f"\u7537\u5b50{group_label}\u7ec4"
+        return f"\u7537\u5b50{display_label}\u7ec4"
     if value in female_labels:
-        return f"\u5973\u5b50{group_label}\u7ec4"
-    return f"\u6df7\u5408{group_label}\u7ec4"
+        return f"\u5973\u5b50{display_label}\u7ec4"
+    return f"\u6df7\u5408{display_label}\u7ec4"
 
 def excel_response(data: List[Dict], filename: str):
     df = pd.DataFrame(data)

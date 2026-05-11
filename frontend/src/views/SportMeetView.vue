@@ -166,12 +166,24 @@
         </div>
         <div class="form-row">
           <label>每组人数</label>
-          <select v-model.number="groupForm.per_group">
+          <select v-model="groupForm.per_group">
+            <option value="">请选择</option>
             <option :value="4">4</option>
             <option :value="5">5</option>
             <option :value="6">6</option>
             <option :value="7">7</option>
             <option :value="8">8</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>组数</label>
+          <select v-model="groupForm.group_count">
+            <option value="">请选择</option>
+            <option :value="1">1</option>
+            <option :value="2">2</option>
+            <option :value="3">3</option>
+            <option :value="4">4</option>
+            <option :value="5">5</option>
           </select>
         </div>
 
@@ -345,6 +357,15 @@
         </div>
 
         <div class="form-row"><label>项目</label><select v-model="resultsQuery.event"><option value="">请选择项目</option><option v-for="item in eventOptions" :key="`rq-${item}`" :value="item">{{ item }}</option></select></div>
+        <div class="form-row">
+          <label>性别</label>
+          <select v-model="resultsQuery.gender">
+            <option value="">请选择性别</option>
+            <option value="男">男</option>
+            <option value="女">女</option>
+            <option value="混合">混合</option>
+          </select>
+        </div>
         <div class="form-row"><label>学院</label><input v-model="resultsQuery.college" placeholder="输入学院" /></div>
         <div class="form-row"><label>姓名</label><input v-model="resultsQuery.name" placeholder="输入姓名" /></div>
         <div class="form-row"><label>学号</label><input v-model="resultsQuery.student_id" placeholder="输入学号" /></div>
@@ -491,7 +512,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref, watch } from 'vue';
 import api from '../api';
 
 const active = ref('home');
@@ -542,13 +563,30 @@ const groupForm = reactive({
   event: '',
   gender: '',
   round: 'prelim',
-  per_group: 8,
+  per_group: '',
+  group_count: '',
 });
 const groupQuery = reactive({
   event: '',
   gender: '',
   round: '',
 });
+watch(
+  () => groupForm.per_group,
+  (value) => {
+    if (value !== '' && groupForm.group_count !== '') {
+      groupForm.group_count = '';
+    }
+  },
+);
+watch(
+  () => groupForm.group_count,
+  (value) => {
+    if (value !== '' && groupForm.per_group !== '') {
+      groupForm.per_group = '';
+    }
+  },
+);
 const ungrouped = ref([]);
 const groupedResults = ref([]);
 const selectedGroupLabel = ref('');
@@ -579,6 +617,54 @@ const rowsUseTeamCode = (rows) => Array.isArray(rows) && rows.some((row) => Stri
 
 const identityColumnLabel = (eventName, rows = []) => ((rowsUseTeamCode(rows) || isRelayEvent(eventName)) ? '队伍编号' : '学号');
 
+const CHINESE_GROUP_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+const toChineseGroupNumber = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '';
+  if (number < 10) return CHINESE_GROUP_DIGITS[number];
+  if (number === 10) return '十';
+  if (number < 20) return `十${CHINESE_GROUP_DIGITS[number % 10]}`;
+  if (number < 100) {
+    const tens = Math.floor(number / 10);
+    const ones = number % 10;
+    return `${CHINESE_GROUP_DIGITS[tens]}十${ones ? CHINESE_GROUP_DIGITS[ones] : ''}`;
+  }
+  return String(number);
+};
+
+const groupLabelOrderValue = (label) => {
+  if (!label) return 999;
+  const text = String(label).trim().replace(/组$/, '');
+  if (!text) return 999;
+  if (/^\d+$/.test(text)) return Number(text);
+  if (/^[A-Z]$/i.test(text)) return text.toUpperCase().charCodeAt(0) - 'A'.charCodeAt(0) + 1;
+  const tenIndex = text.indexOf('十');
+  if (tenIndex !== -1) {
+    const left = text.slice(0, tenIndex);
+    const right = text.slice(tenIndex + 1);
+    const tens = left ? CHINESE_GROUP_DIGITS.indexOf(left) : 1;
+    const ones = right ? CHINESE_GROUP_DIGITS.indexOf(right) : 0;
+    if (tens >= 0 && ones >= 0) return tens * 10 + ones;
+  }
+  const digitIndex = CHINESE_GROUP_DIGITS.indexOf(text);
+  if (digitIndex >= 0) return digitIndex;
+  return 999;
+};
+
+const normalizeGroupLabel = (value) => {
+  if (!value) return '';
+  const text = String(value).trim().replace(/组$/, '');
+  if (!text) return '';
+  if (/^[A-Z]$/i.test(text)) {
+    return toChineseGroupNumber(text.toUpperCase().charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  if (/^\d+$/.test(text)) {
+    return toChineseGroupNumber(Number(text));
+  }
+  return text;
+};
+
 const groupGenderText = (gender) => {
   if (gender === '') return '';
   if (gender === '') return '';
@@ -588,13 +674,13 @@ const groupGenderText = (gender) => {
 
 const formatGroupResultTitle = (group) => {
   const roundText = getRoundLabel(groupQuery.round || groupForm.round);
-  const groupText = group?.label ? `${group.label}组` : '';
+  const groupText = group?.label ? `${normalizeGroupLabel(group.label)}组` : '';
   return [roundText, group?.event || '', groupText].filter(Boolean).join('-');
 };
 
 const formatRosterGroupLabel = (label) => {
   if (!label) return '未分组';
-  const text = String(label).trim();
+  const text = normalizeGroupLabel(label);
   return text.endsWith('组') ? text : `${text}组`;
 };
 
@@ -614,6 +700,8 @@ const resultsRosterGroups = computed(() => {
       const labelB = String(b[0] || '');
       if (!labelA && labelB) return 1;
       if (labelA && !labelB) return -1;
+      const orderDiff = groupLabelOrderValue(labelA) - groupLabelOrderValue(labelB);
+      if (orderDiff !== 0) return orderDiff;
       return labelA.localeCompare(labelB, undefined, { numeric: true });
     })
     .map(([label, rows]) => ({
@@ -639,7 +727,7 @@ const openResultsQuery = () => {
 };
 
 const resultForm = reactive({ event: '', gender: '', round: 'final', unit: '秒' });
-const resultsQuery = reactive({ event: '', college: '', name: '', student_id: '', round: '' });
+const resultsQuery = reactive({ event: '', gender: '', college: '', name: '', student_id: '', round: '' });
 
 
 const normalizeEventName = (eventName) => {
@@ -672,14 +760,16 @@ const isDistanceEvent = (eventName) => {
   return keywords.some((k) => value.includes(String(k).toLowerCase()));
 };
 
+const supportsGroupCountMode = (eventName) => isHighJumpEvent(eventName) || isDistanceEvent(eventName) || isLongDistanceEvent(eventName);
+
 const displayGroupName = (value) => {
   if (!value) return '';
   const textValue = String(value);
   const mojibakeChars = /[???????????????????????????????????????????????????????]/g;
   const hits = (textValue.match(mojibakeChars) || []).length;
-  if (hits < 2) return textValue;
+  if (hits < 2) return textValue.replace(/([A-Z])组/g, (_, letter) => `${normalizeGroupLabel(letter)}组`);
   const label = textValue.match(/[A-Z]/)?.[0] || '';
-  return label ? `\u7b2c${label}\u7ec4` : '';
+  return label ? `${normalizeGroupLabel(label)}组` : '';
 };
 
 const bestAttempt = (row) => {
@@ -792,15 +882,21 @@ const exportEvents = () => window.open(`${api.defaults.baseURL}/export/events`, 
 const loadGroupResultsByRows = (rows, append = false, genderHint = '') => {
   const byKey = new Map();
   for (const item of rows || []) {
-    const key = `${item.event || ''}__${item.group_label || ''}`;
+    const groupLabel = normalizeGroupLabel(item.group_label);
+    const normalizedItem = { ...item, group_label: groupLabel };
+    const key = `${normalizedItem.event || ''}__${groupLabel}`;
     if (!byKey.has(key)) {
-      byKey.set(key, { event: item.event || '', label: item.group_label || '', gender: genderHint, rows: [] });
+      byKey.set(key, { event: normalizedItem.event || '', label: groupLabel, gender: genderHint, rows: [] });
     }
-    byKey.get(key).rows.push(item);
+    byKey.get(key).rows.push(normalizedItem);
   }
   const grouped = Array.from(byKey.values());
   grouped.sort((a, b) => {
-    if (a.event === b.event) return a.label.localeCompare(b.label);
+    if (a.event === b.event) {
+      const orderDiff = groupLabelOrderValue(a.label) - groupLabelOrderValue(b.label);
+      if (orderDiff !== 0) return orderDiff;
+      return a.label.localeCompare(b.label);
+    }
     return a.event.localeCompare(b.event);
   });
   groupedResults.value = append ? [...groupedResults.value, ...grouped.map((g) => ({ ...g, gender: g.gender || genderHint }))] : grouped;
@@ -817,22 +913,80 @@ const shuffleArray = (items) => {
   return arr;
 };
 
-const generateGroups = async () => {
-  if (!ungrouped.value.length) return;
-  groupMessage.value = '';
-  const perGroup = Number(groupForm.per_group) || 8;
-  const pool = shuffleArray(ungrouped.value);
-  const picked = pool.slice(0, perGroup);
-  if (!picked.length) return;
-  const label = String.fromCharCode('A'.charCodeAt(0) + groupedResults.value.length);
-  const numberPool = usesBibNumber(groupForm.event) ? Array.from({ length: 30 }, (_, i) => i + 1) : Array.from({ length: picked.length }, (_, i) => i + 1);
-  const lanes = shuffleArray(numberPool).slice(0, picked.length);
-  const groupRows = picked.map((row, idx) => ({
+const buildGroupLaneValues = (eventName, count) => {
+  if (usesBibNumber(eventName)) {
+    const upperBound = Math.max(30, count);
+    return shuffleArray(Array.from({ length: upperBound }, (_, i) => i + 1)).slice(0, count);
+  }
+  return shuffleArray(Array.from({ length: count }, (_, i) => i + 1));
+};
+
+const buildGroupedRows = (picked, label) => {
+  const lanes = buildGroupLaneValues(groupForm.event, picked.length);
+  return picked.map((row, idx) => ({
     ...row,
     event: groupForm.event || row.event,
     group_label: label,
     lane: lanes[idx],
   }));
+};
+
+const generateGroups = async () => {
+  if (!ungrouped.value.length) return;
+  groupMessage.value = '';
+  const perGroup = Number(groupForm.per_group) || 0;
+  const groupCount = Number(groupForm.group_count) || 0;
+
+  if (!perGroup && !groupCount) {
+    groupMessage.value = '请选择每组人数或组数';
+    window.alert(groupMessage.value);
+    return;
+  }
+
+  if (perGroup && groupCount) {
+    groupMessage.value = '每组人数和组数只能选择一种';
+    window.alert(groupMessage.value);
+    return;
+  }
+
+  if (groupCount) {
+    if (!supportsGroupCountMode(groupForm.event)) {
+      groupMessage.value = '组数分组适用于跳远、跳高、铅球等田赛项目，以及800米及以上长跑项目';
+      window.alert(groupMessage.value);
+      return;
+    }
+
+    const pool = shuffleArray(ungrouped.value);
+    const actualGroupCount = Math.min(groupCount, pool.length);
+    const baseSize = Math.floor(pool.length / actualGroupCount);
+    const remainder = pool.length % actualGroupCount;
+    const startIndex = groupedResults.value.length;
+    const newGroups = [];
+    let cursor = 0;
+
+    for (let idx = 0; idx < actualGroupCount; idx += 1) {
+      const chunkSize = baseSize + (idx < remainder ? 1 : 0);
+      const picked = pool.slice(cursor, cursor + chunkSize);
+      cursor += chunkSize;
+      if (!picked.length) continue;
+      const label = toChineseGroupNumber(startIndex + newGroups.length + 1);
+      const groupRows = buildGroupedRows(picked, label);
+      newGroups.push({ event: groupForm.event || '', label, gender: groupForm.gender, rows: groupRows });
+    }
+
+    if (!newGroups.length) return;
+    groupedResults.value = [...groupedResults.value, ...newGroups];
+    groups.value = newGroups[0].rows;
+    selectedGroupLabel.value = `${groupForm.event || ''}__${newGroups[0].label}`;
+    ungrouped.value = [];
+    return;
+  }
+
+  const pool = shuffleArray(ungrouped.value);
+  const picked = pool.slice(0, perGroup);
+  if (!picked.length) return;
+  const label = toChineseGroupNumber(groupedResults.value.length + 1);
+  const groupRows = buildGroupedRows(picked, label);
   groupedResults.value = [
     ...groupedResults.value,
     { event: groupForm.event || '', label, gender: groupForm.gender, rows: groupRows },
@@ -943,6 +1097,7 @@ const selectGroup = (event, label) => {
 const fetchResults = async () => {
   const params = {};
   if (resultForm.event) params.event = resultForm.event;
+  if (resultsQuery.gender) params.gender = resultsQuery.gender;
   if (resultsQuery.round) params.round = resultsQuery.round;
   const { data } = await api.get('/results/list', { params }).catch(() => ({ data: [] }));
   results.value = data || [];
@@ -951,7 +1106,12 @@ const fetchResults = async () => {
 const exportResults = () => {
   const params = new URLSearchParams();
   const exportEvent = resultsQuery.event || resultForm.event;
-  if (exportEvent) params.set('event', exportEvent);
+  if (!exportEvent) {
+    window.alert('请先选择项目');
+    return;
+  }
+  params.set('event', exportEvent);
+  if (resultsQuery.gender) params.set('gender', resultsQuery.gender);
   if (resultsQuery.college) params.set('college', resultsQuery.college);
   if (resultsQuery.name) params.set('name', resultsQuery.name);
   if (resultsQuery.student_id) params.set('student_id', resultsQuery.student_id);
@@ -963,7 +1123,12 @@ const exportResults = () => {
 const exportResultsTemplate = () => {
   const params = new URLSearchParams();
   const exportEvent = resultsQuery.event || resultForm.event;
-  if (exportEvent) params.set('event', exportEvent);
+  if (!exportEvent) {
+    window.alert('请先选择项目');
+    return;
+  }
+  params.set('event', exportEvent);
+  if (resultsQuery.gender) params.set('gender', resultsQuery.gender);
   if (resultsQuery.round) params.set('round', resultsQuery.round);
   const query = params.toString();
   const url = `${api.defaults.baseURL}/export/results-template${query ? `?${query}` : ''}`;
@@ -1010,6 +1175,7 @@ const formatDate = (date) => {
 const searchResults = async () => {
   const params = {};
   if (resultsQuery.event) params.event = resultsQuery.event;
+  if (resultsQuery.gender) params.gender = resultsQuery.gender;
   if (resultsQuery.college) params.college = resultsQuery.college;
   if (resultsQuery.name) params.name = resultsQuery.name;
   if (resultsQuery.student_id) params.student_id = resultsQuery.student_id;
@@ -1086,7 +1252,7 @@ const queryRoster = async () => {
     name: row.name,
     student_id: row.student_id,
     event: row.event,
-    group_label: row.group_label,
+    group_label: normalizeGroupLabel(row.group_label),
     lane: row.lane,
   }));
 
@@ -1117,7 +1283,7 @@ const queryRoster = async () => {
       };
     })
     .sort((rowA, rowB) => {
-      const groupCompare = String(rowA?.group_label || '').localeCompare(String(rowB?.group_label || ''), undefined, { numeric: true });
+      const groupCompare = groupLabelOrderValue(rowA?.group_label) - groupLabelOrderValue(rowB?.group_label);
       if (groupCompare !== 0) return groupCompare;
       const laneA = rowA?.lane ?? 999;
       const laneB = rowB?.lane ?? 999;

@@ -89,3 +89,9 @@ class ResultDistanceSubmitRequest(BaseModel):
     attempt: int
     score: float
     date: Optional[datetime] = None
+
+
+class TeamRankingManualBonusRequest(BaseModel):
+    event: str
+    student_id: str
+    manual_points: int = 0

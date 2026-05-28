@@ -213,3 +213,17 @@ class CollegeRanking(Base):
     participant_count = Column(Integer, nullable=False)
     total_points = Column(Integer, nullable=False)
 
+
+class TeamRankingManualBonus(Base):
+    __tablename__ = "team_ranking_manual_bonus"
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(String(50), nullable=False)
+    event = Column(String(100), nullable=False)
+    manual_points = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "event", name="uq_team_ranking_manual_bonus"),
+    )
+

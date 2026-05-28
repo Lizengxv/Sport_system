@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="dashboard-layout">
     <aside class="sidebar">
       <h2>运动会管理</h2>
@@ -294,12 +294,10 @@
           </select>
         </div>
         <div class="form-row">
-          <label>成绩单位</label>
+          <label>成绩度量</label>
           <select v-model="resultForm.unit">
-            <option value="秒">秒</option>
-            <option value="毫秒">毫秒</option>
-            <option value="厘米">厘米</option>
-            <option value="米">米</option>
+            <option :value="RESULT_METRIC_DISTANCE">{{ RESULT_METRIC_DISTANCE }}</option>
+            <option :value="RESULT_METRIC_TIME">{{ RESULT_METRIC_TIME }}</option>
           </select>
         </div>
         <button class="btn secondary" @click="queryRoster">查询名单</button>
@@ -313,28 +311,117 @@
             <table class="table">
               <thead>
                 <tr>
-                  <th>项目</th><th>学院</th><th>姓名</th><th>{{ identityColumnLabel(resultForm.event, group.rows) }}</th><th>{{ usesBibNumber(resultForm.event) ? '号码' : '道次' }}</th><th>成绩</th><th>排名</th><th>日期</th>
+                  <th>项目</th><th>学院</th><th>姓名</th><th>{{ identityColumnLabel(resultsRosterEvent, group.rows) }}</th><th>{{ usesBibNumber(resultsRosterEvent) ? '号码' : '道次' }}</th><th>成绩</th><th>排名</th><th>日期</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="row in group.rows" :key="`${group.label || 'ungrouped'}-${row.id}-${row.student_id}`">
-                  <td>{{ resultForm.event }}</td>
+                  <td>{{ resultsRosterEvent }}</td>
                   <td>{{ row.college }}</td>
                   <td>{{ row.name }}</td>
                   <td>{{ row.student_id }}</td>
                   <td>{{ row.lane ?? '' }}</td>
                   <td>
-                    <div v-if="isDistanceEvent(resultForm.event)" class="distance-score">
+                    <div v-if="isDistanceEvent(resultsRosterEvent)" class="distance-score">
                       <div class="distance-row">
-                        <input v-model.number="row.attempt1" placeholder="第一次" />
-                        <input v-model.number="row.attempt2" placeholder="第二次" />
-                        <input v-model.number="row.attempt3" placeholder="第三次" />
+                        <template v-if="resultForm.unit === RESULT_METRIC_DISTANCE">
+                          <div class="distance-attempt-card">
+                            <div class="distance-attempt-title">第一次</div>
+                            <div class="distance-composite">
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt1Meters" type="number" min="0" step="1" placeholder="米" />
+                                <span class="unit-badge">米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt1Centimeters" type="number" min="0" step="1" placeholder="厘米" />
+                                <span class="unit-badge">厘米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt1Millimeters" type="number" min="0" step="1" placeholder="毫米" />
+                                <span class="unit-badge">毫米</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="distance-attempt-card">
+                            <div class="distance-attempt-title">第二次</div>
+                            <div class="distance-composite">
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt2Meters" type="number" min="0" step="1" placeholder="米" />
+                                <span class="unit-badge">米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt2Centimeters" type="number" min="0" step="1" placeholder="厘米" />
+                                <span class="unit-badge">厘米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt2Millimeters" type="number" min="0" step="1" placeholder="毫米" />
+                                <span class="unit-badge">毫米</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="distance-attempt-card">
+                            <div class="distance-attempt-title">第三次</div>
+                            <div class="distance-composite">
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt3Meters" type="number" min="0" step="1" placeholder="米" />
+                                <span class="unit-badge">米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt3Centimeters" type="number" min="0" step="1" placeholder="厘米" />
+                                <span class="unit-badge">厘米</span>
+                              </div>
+                              <div class="distance-segment">
+                                <input v-model.number="row.attempt3Millimeters" type="number" min="0" step="1" placeholder="毫米" />
+                                <span class="unit-badge">毫米</span>
+                              </div>
+                            </div>
+                          </div>
+                        </template>
+                        <template v-else>
+                          <input v-model.number="row.attempt1" placeholder="第一次" />
+                          <input v-model.number="row.attempt2" placeholder="第二次" />
+                          <input v-model.number="row.attempt3" placeholder="第三次" />
+                        </template>
                       </div>
                       <div class="muted">最佳：{{ bestAttempt(row) || '' }}</div>
                     </div>
                     <div v-else class="score-input">
-                      <input v-model.number="row.inputScore" />
-                      <span class="unit-badge">{{ resultForm.unit }}</span>
+                      <template v-if="resultForm.unit === RESULT_METRIC_TIME">
+                        <div class="time-score">
+                          <div class="time-segment">
+                            <input v-model.number="row.inputHours" type="number" min="0" step="1" placeholder="时" />
+                            <span class="unit-badge">时</span>
+                          </div>
+                          <div class="time-segment">
+                            <input v-model.number="row.inputMinutes" type="number" min="0" step="1" placeholder="分" />
+                            <span class="unit-badge">分</span>
+                          </div>
+                          <div class="time-segment">
+                            <input v-model.number="row.inputSeconds" type="number" min="0" step="0.01" placeholder="秒" />
+                            <span class="unit-badge">秒</span>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="resultForm.unit === RESULT_METRIC_DISTANCE">
+                        <div class="distance-composite">
+                          <div class="distance-segment">
+                            <input v-model.number="row.inputMeters" type="number" min="0" step="1" placeholder="米" />
+                            <span class="unit-badge">米</span>
+                          </div>
+                          <div class="distance-segment">
+                            <input v-model.number="row.inputCentimeters" type="number" min="0" step="1" placeholder="厘米" />
+                            <span class="unit-badge">厘米</span>
+                          </div>
+                          <div class="distance-segment">
+                            <input v-model.number="row.inputMillimeters" type="number" min="0" step="1" placeholder="毫米" />
+                            <span class="unit-badge">毫米</span>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <input v-model.number="row.inputScore" />
+                        <span class="unit-badge">{{ resultForm.unit }}</span>
+                      </template>
                     </div>
                   </td>
                   <td>{{ row.rank ?? '' }}</td>
@@ -396,7 +483,7 @@
                   <td>{{ row.name }}</td>
                   <td>{{ row.student_id }}</td>
                   <td>{{ row.college }}</td>
-                  <td>{{ row.score }}</td>
+                  <td>{{ formatDisplayScore(row.event, row.score) }}</td>
                   <td>{{ row.rank }}</td>
                   <td>{{ row.round }}</td>
                   <td>{{ row.record_broken ? '是' : '否' }}</td>
@@ -418,7 +505,7 @@
               <td>{{ row.name }}</td>
               <td>{{ row.student_id }}</td>
               <td>{{ row.college }}</td>
-              <td>{{ row.score }}</td>
+              <td>{{ formatDisplayScore(row.event, row.score) }}</td>
               <td>{{ row.rank }}</td>
               <td>{{ row.round }}</td>
               <td>{{ row.record_broken ? '是' : '否' }}</td>
@@ -436,6 +523,7 @@
             <button class="btn secondary" @click="initCollegeRanking">初始化学院排名</button>
             <button class="btn secondary" @click="exportPersonalRanking">导出个人排名</button>
             <button class="btn secondary" @click="exportCollegeRanking">导出学院排名</button>
+            <button class="btn secondary" @click="exportTeamRanking">导出团体积分</button>
           </div>
         </div>
 
@@ -478,7 +566,7 @@
         <h5 style="margin-top: 16px">男子团体</h5>
         <table class="table">
           <thead>
-            <tr><th>项目</th><th>学院</th><th>成绩</th><th>排名</th><th>积分</th></tr>
+            <tr><th>项目</th><th>学院</th><th>成绩</th><th>排名</th><th>项目得分</th><th></th><th>总积分</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="row in teamRankings.male" :key="`male-${row.event}-${row.student_id}-${row.rank}`">
@@ -486,7 +574,10 @@
               <td>{{ row.college }}</td>
               <td>{{ row.score }}</td>
               <td>{{ row.rank }}</td>
-              <td>{{ row.points }}</td>
+              <td>{{ row.base_points }}</td>
+              <td><input v-model.number="row.manual_bonus" type="number" step="1" style="width: 88px" /></td>
+              <td>{{ Number(row.base_points || 0) + Number(row.manual_bonus || 0) }}</td>
+              <td><button class="btn secondary" @click="saveTeamBonus(row)">保存</button></td>
             </tr>
           </tbody>
         </table>
@@ -494,7 +585,7 @@
         <h5 style="margin-top: 16px">女子团体</h5>
         <table class="table">
           <thead>
-            <tr><th>项目</th><th>学院</th><th>成绩</th><th>排名</th><th>积分</th></tr>
+            <tr><th>项目</th><th>学院</th><th>成绩</th><th>排名</th><th>项目得分</th><th></th><th>总积分</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="row in teamRankings.female" :key="`female-${row.event}-${row.student_id}-${row.rank}`">
@@ -502,7 +593,10 @@
               <td>{{ row.college }}</td>
               <td>{{ row.score }}</td>
               <td>{{ row.rank }}</td>
-              <td>{{ row.points }}</td>
+              <td>{{ row.base_points }}</td>
+              <td><input v-model.number="row.manual_bonus" type="number" step="1" style="width: 88px" /></td>
+              <td>{{ Number(row.base_points || 0) + Number(row.manual_bonus || 0) }}</td>
+              <td><button class="btn secondary" @click="saveTeamBonus(row)">保存</button></td>
             </tr>
           </tbody>
         </table>
@@ -606,7 +700,7 @@ const isLongDistanceEvent = (eventName) => {
   const match = value.match(/(\d+)/);
   if (!match) return false;
   const meters = Number(match[1]);
-  return Number.isFinite(meters) && meters >= 800;
+  return Number.isFinite(meters) && meters > 800;
 };
 
 const usesBibNumber = (eventName) => isLongDistanceEvent(eventName) || isDistanceEvent(eventName) || isHighJumpEvent(eventName);
@@ -726,8 +820,172 @@ const openResultsQuery = () => {
   active.value = 'results-query';
 };
 
-const resultForm = reactive({ event: '', gender: '', round: 'final', unit: '秒' });
+const RESULT_METRIC_DISTANCE = '\u8ddd\u79bb';
+const RESULT_METRIC_TIME = '\u65f6\u95f4';
+const resultForm = reactive({ event: '', gender: '', round: 'final', unit: RESULT_METRIC_TIME });
 const resultsQuery = reactive({ event: '', gender: '', college: '', name: '', student_id: '', round: '' });
+const rosterQueryContext = reactive({ event: '', gender: '', round: '' });
+const resultsRosterEvent = computed(() => rosterQueryContext.event || resultForm.event || '');
+
+const splitTimeScore = (score) => {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) {
+    return { hours: '', minutes: '', seconds: '' };
+  }
+  const hours = Math.floor(numeric / 3600);
+  const minutes = Math.floor((numeric - hours * 3600) / 60);
+  const seconds = Number((numeric - hours * 3600 - minutes * 60).toFixed(2));
+  return { hours, minutes, seconds };
+};
+
+const mergeTimeScore = (hours, minutes, seconds) => {
+  const hasHours = hours !== '' && hours !== null && hours !== undefined;
+  const hasMinutes = minutes !== '' && minutes !== null && minutes !== undefined;
+  const hasSeconds = seconds !== '' && seconds !== null && seconds !== undefined;
+  if (!hasHours && !hasMinutes && !hasSeconds) {
+    return null;
+  }
+  const hourValue = Number(hasHours ? hours : 0);
+  const minuteValue = Number(hasMinutes ? minutes : 0);
+  const secondValue = Number(hasSeconds ? seconds : 0);
+  if (!Number.isFinite(hourValue) || !Number.isFinite(minuteValue) || !Number.isFinite(secondValue)) {
+    return null;
+  }
+  return Number((hourValue * 3600 + minuteValue * 60 + secondValue).toFixed(2));
+};
+
+const isTimeScoreEvent = (eventName) => !isDistanceEvent(eventName) && !isHighJumpEvent(eventName);
+
+const formatDisplayScore = (eventName, score) => {
+  if (score === '' || score === null || score === undefined) return '';
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+
+  if (!isTimeScoreEvent(eventName)) {
+    return score;
+  }
+
+  const { hours, minutes, seconds } = splitTimeScore(numeric);
+  const parts = [];
+  if (hours) parts.push(`${hours}时`);
+  if (minutes) parts.push(`${minutes}分`);
+  if (seconds) parts.push(`${seconds}秒`);
+  return parts.join('') || '';
+};
+
+const splitDistanceScore = (score) => {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) {
+    return { meters: '', centimeters: '', millimeters: '' };
+  }
+  const totalMillimeters = Math.round(numeric * 1000);
+  const meters = Math.floor(totalMillimeters / 1000);
+  const remainder = totalMillimeters - meters * 1000;
+  const centimeters = Math.floor(remainder / 10);
+  const millimeters = remainder - centimeters * 10;
+  return { meters, centimeters, millimeters };
+};
+
+const mergeDistanceScore = (meters, centimeters, millimeters) => {
+  const hasMeters = meters !== '' && meters !== null && meters !== undefined;
+  const hasCentimeters = centimeters !== '' && centimeters !== null && centimeters !== undefined;
+  const hasMillimeters = millimeters !== '' && millimeters !== null && millimeters !== undefined;
+  if (!hasMeters && !hasCentimeters && !hasMillimeters) {
+    return null;
+  }
+  const meterValue = Number(hasMeters ? meters : 0);
+  const centimeterValue = Number(hasCentimeters ? centimeters : 0);
+  const millimeterValue = Number(hasMillimeters ? millimeters : 0);
+  if (!Number.isFinite(meterValue) || !Number.isFinite(centimeterValue) || !Number.isFinite(millimeterValue)) {
+    return null;
+  }
+  return Number((meterValue + centimeterValue / 100 + millimeterValue / 1000).toFixed(3));
+};
+
+const syncRowTimeFieldsFromScore = (row) => {
+  const { hours, minutes, seconds } = splitTimeScore(row?.inputScore);
+  row.inputHours = hours;
+  row.inputMinutes = minutes;
+  row.inputSeconds = seconds;
+};
+
+const syncRowScoreFromTimeFields = (row) => {
+  const merged = mergeTimeScore(row?.inputHours, row?.inputMinutes, row?.inputSeconds);
+  row.inputScore = merged ?? '';
+  return merged;
+};
+
+const syncRowDistanceFieldsFromScore = (row) => {
+  const { meters, centimeters, millimeters } = splitDistanceScore(row?.inputScore);
+  row.inputMeters = meters;
+  row.inputCentimeters = centimeters;
+  row.inputMillimeters = millimeters;
+};
+
+const syncRowScoreFromDistanceFields = (row) => {
+  const merged = mergeDistanceScore(row?.inputMeters, row?.inputCentimeters, row?.inputMillimeters);
+  row.inputScore = merged ?? '';
+  return merged;
+};
+
+const attemptScoreFieldKey = (idx) => `attempt${idx}`;
+const attemptMetersFieldKey = (idx) => `attempt${idx}Meters`;
+const attemptCentimetersFieldKey = (idx) => `attempt${idx}Centimeters`;
+const attemptMillimetersFieldKey = (idx) => `attempt${idx}Millimeters`;
+
+const syncAttemptDistanceFieldsFromValue = (row, idx) => {
+  const { meters, centimeters, millimeters } = splitDistanceScore(row?.[attemptScoreFieldKey(idx)]);
+  row[attemptMetersFieldKey(idx)] = meters;
+  row[attemptCentimetersFieldKey(idx)] = centimeters;
+  row[attemptMillimetersFieldKey(idx)] = millimeters;
+};
+
+const syncAttemptValueFromDistanceFields = (row, idx) => {
+  const merged = mergeDistanceScore(
+    row?.[attemptMetersFieldKey(idx)],
+    row?.[attemptCentimetersFieldKey(idx)],
+    row?.[attemptMillimetersFieldKey(idx)],
+  );
+  row[attemptScoreFieldKey(idx)] = merged ?? '';
+  return merged;
+};
+
+const resolveAttemptValue = (row, idx) => {
+  if (resultForm.unit === RESULT_METRIC_DISTANCE) {
+    const merged = mergeDistanceScore(
+      row?.[attemptMetersFieldKey(idx)],
+      row?.[attemptCentimetersFieldKey(idx)],
+      row?.[attemptMillimetersFieldKey(idx)],
+    );
+    if (merged !== null) {
+      return merged;
+    }
+  }
+  return row?.[attemptScoreFieldKey(idx)];
+};
+
+watch(
+  () => resultForm.unit,
+  (value, oldValue) => {
+    if (oldValue === RESULT_METRIC_TIME) {
+      roster.value.forEach((row) => syncRowScoreFromTimeFields(row));
+    } else if (oldValue === RESULT_METRIC_DISTANCE) {
+      roster.value.forEach((row) => {
+        syncRowScoreFromDistanceFields(row);
+        [1, 2, 3].forEach((idx) => syncAttemptValueFromDistanceFields(row, idx));
+      });
+    }
+
+    if (value === RESULT_METRIC_TIME) {
+      roster.value.forEach((row) => syncRowTimeFieldsFromScore(row));
+    } else if (value === RESULT_METRIC_DISTANCE) {
+      roster.value.forEach((row) => {
+        syncRowDistanceFieldsFromScore(row);
+        [1, 2, 3].forEach((idx) => syncAttemptDistanceFieldsFromValue(row, idx));
+      });
+    }
+  },
+);
 
 
 const normalizeEventName = (eventName) => {
@@ -765,15 +1023,17 @@ const supportsGroupCountMode = (eventName) => isHighJumpEvent(eventName) || isDi
 const displayGroupName = (value) => {
   if (!value) return '';
   const textValue = String(value);
-  const mojibakeChars = /[???????????????????????????????????????????????????????]/g;
-  const hits = (textValue.match(mojibakeChars) || []).length;
+  const mojibakeMarks = ['锟', '鈥', '闆', '鍒', '缁', '璇', '閫', '鎬', '鍙', 'å', 'æ', 'ç', 'é', 'è', 'ï', '�'];
+  const hits = mojibakeMarks.reduce((sum, mark) => sum + (textValue.split(mark).length - 1), 0) + (textValue.includes('??') ? 2 : 0);
   if (hits < 2) return textValue.replace(/([A-Z])组/g, (_, letter) => `${normalizeGroupLabel(letter)}组`);
   const label = textValue.match(/[A-Z]/)?.[0] || '';
   return label ? `${normalizeGroupLabel(label)}组` : '';
 };
 
 const bestAttempt = (row) => {
-  const vals = [row.attempt1, row.attempt2, row.attempt3].filter((v) => v !== null && v !== undefined && v !== '');
+  const vals = [1, 2, 3]
+    .map((idx) => resolveAttemptValue(row, idx))
+    .filter((v) => v !== null && v !== undefined && v !== '');
   if (!vals.length) return '';
   return Math.max(...vals);
 };
@@ -913,7 +1173,27 @@ const shuffleArray = (items) => {
   return arr;
 };
 
-const buildGroupLaneValues = (eventName, count) => {
+const FINAL_SPRINT_LANE_ORDER = [4, 5, 3, 6, 2, 7, 1, 8];
+
+const usesSeededFinalLanes = (eventName, roundValue) => {
+  if (roundValue !== 'final') return false;
+  if (!eventName) return false;
+  return !usesBibNumber(eventName) && !isRelayEvent(eventName);
+};
+
+const buildGroupSourceRows = (rows, eventName, roundValue) => (
+  usesSeededFinalLanes(eventName, roundValue) ? [...rows] : shuffleArray(rows)
+);
+
+const buildGroupLaneValues = (eventName, count, roundValue = groupForm.round) => {
+  if (usesSeededFinalLanes(eventName, roundValue)) {
+    const seeded = FINAL_SPRINT_LANE_ORDER.slice(0, count);
+    if (seeded.length === count) return seeded;
+    return [
+      ...seeded,
+      ...Array.from({ length: count - seeded.length }, (_, idx) => seeded.length + idx + 1),
+    ];
+  }
   if (usesBibNumber(eventName)) {
     const upperBound = Math.max(30, count);
     return shuffleArray(Array.from({ length: upperBound }, (_, i) => i + 1)).slice(0, count);
@@ -922,7 +1202,7 @@ const buildGroupLaneValues = (eventName, count) => {
 };
 
 const buildGroupedRows = (picked, label) => {
-  const lanes = buildGroupLaneValues(groupForm.event, picked.length);
+  const lanes = buildGroupLaneValues(groupForm.event, picked.length, groupForm.round);
   return picked.map((row, idx) => ({
     ...row,
     event: groupForm.event || row.event,
@@ -956,7 +1236,7 @@ const generateGroups = async () => {
       return;
     }
 
-    const pool = shuffleArray(ungrouped.value);
+    const pool = buildGroupSourceRows(ungrouped.value, groupForm.event, groupForm.round);
     const actualGroupCount = Math.min(groupCount, pool.length);
     const baseSize = Math.floor(pool.length / actualGroupCount);
     const remainder = pool.length % actualGroupCount;
@@ -982,7 +1262,7 @@ const generateGroups = async () => {
     return;
   }
 
-  const pool = shuffleArray(ungrouped.value);
+  const pool = buildGroupSourceRows(ungrouped.value, groupForm.event, groupForm.round);
   const picked = pool.slice(0, perGroup);
   if (!picked.length) return;
   const label = toChineseGroupNumber(groupedResults.value.length + 1);
@@ -1059,7 +1339,7 @@ const queryGroupCandidates = async () => {
       params: { event: groupForm.event, gender: groupForm.gender, round: groupForm.round },
     })
     .catch((error) => {
-      const detail = error?.response?.data?.detail;
+      const detail = error?.response?.data?.detail || '查询分组候选人员失败';
       if (detail) {
         groupMessage.value = detail;
         window.alert(detail);
@@ -1075,7 +1355,7 @@ const queryGroupCandidates = async () => {
 const queryGroups = async () => {
   groupMessage.value = '';
   if (!groupQuery.event || !groupQuery.gender || !groupQuery.round) {
-    groupMessage.value = '';
+    groupMessage.value = '请先选择项目、性别和轮次';
     window.alert(groupMessage.value);
     return;
   }
@@ -1156,16 +1436,39 @@ const fetchCollegeRanking = async () => {
   collegeRankings.value = data || [];
 };
 
+const normalizeTeamRankingRows = (rows = []) => rows.map((row) => ({
+  ...row,
+  base_points: Number(row?.base_points ?? row?.points ?? 0),
+  manual_bonus: Number(row?.manual_bonus ?? 0),
+  total_points: Number(row?.total_points ?? row?.points ?? 0),
+}));
+
 const fetchTeamRanking = async () => {
   const { data } = await api.get('/rankings/team/list').catch(() => ({ data: { male: [], female: [] } }));
   teamRankings.value = {
-    male: data?.male || [],
-    female: data?.female || [],
+    male: normalizeTeamRankingRows(data?.male || []),
+    female: normalizeTeamRankingRows(data?.female || []),
   };
+};
+
+const saveTeamBonus = async (row) => {
+  const payload = {
+    event: row.event,
+    student_id: row.student_id,
+    manual_points: Number(row.manual_bonus || 0),
+  };
+  try {
+    await api.post('/rankings/team/bonus', payload);
+    await fetchTeamRanking();
+  } catch (error) {
+    const detail = error?.response?.data?.detail;
+    window.alert(detail || '保存团体手动加分失败');
+  }
 };
 
 const exportPersonalRanking = () => window.open(`${api.defaults.baseURL}/export/personal-rankings`, '_blank');
 const exportCollegeRanking = () => window.open(`${api.defaults.baseURL}/export/college-rankings`, '_blank');
+const exportTeamRanking = () => window.open(`${api.defaults.baseURL}/export/team-rankings`, '_blank');
 
 const formatDate = (date) => {
   if (!date) return '';
@@ -1184,7 +1487,19 @@ const searchResults = async () => {
   results.value = data || [];
 };
 
-const resultsTable = computed(() => results.value);
+const compareResultsByRank = (left, right) => {
+  const leftRank = Number.isFinite(Number(left?.rank)) ? Number(left.rank) : Number.POSITIVE_INFINITY;
+  const rightRank = Number.isFinite(Number(right?.rank)) ? Number(right.rank) : Number.POSITIVE_INFINITY;
+  if (leftRank !== rightRank) return leftRank - rightRank;
+
+  const leftScore = Number.isFinite(Number(left?.score)) ? Number(left.score) : Number.POSITIVE_INFINITY;
+  const rightScore = Number.isFinite(Number(right?.score)) ? Number(right.score) : Number.POSITIVE_INFINITY;
+  if (leftScore !== rightScore) return leftScore - rightScore;
+
+  return String(left?.name || '').localeCompare(String(right?.name || ''));
+};
+
+const resultsTable = computed(() => [...results.value].sort(compareResultsByRank));
 
 const queryRoundGroups = computed(() => {
   const order = ['prelim', 'semi', 'final', 'one'];
@@ -1211,7 +1526,7 @@ const queryRoundGroups = computed(() => {
     .map(([round, rows]) => ({
       round,
       label: labels[round] || round,
-      rows,
+      rows: [...rows].sort(compareResultsByRank),
     }));
 });
 
@@ -1219,10 +1534,16 @@ const fetchEventOptions = async () => {
   const { data } = await api.get('/events/options').catch(() => ({ data: [] }));
   eventOptions.value = data || [];
 };
+const clearRosterQueryContext = () => {
+  rosterQueryContext.event = '';
+  rosterQueryContext.gender = '';
+  rosterQueryContext.round = '';
+};
 
 const queryRoster = async () => {
   if (!resultForm.event || !resultForm.gender) {
     roster.value = [];
+    clearRosterQueryContext();
     resultMessage.value = !resultForm.event ? '请先选择项目' : '请先选择性别';
     window.alert(resultMessage.value);
     return;
@@ -1239,6 +1560,7 @@ const queryRoster = async () => {
 
   if (!groupRows.length) {
     roster.value = [];
+    clearRosterQueryContext();
     resultMessage.value = resultForm.round === 'final'
       ? '\u672a\u627e\u5230\u51b3\u8d5b\u5206\u7ec4\u540d\u5355\uff0c\u8bf7\u5148\u5728\u5206\u7ec4\u7ba1\u7406\u4e2d\u5b8c\u6210\u51b3\u8d5b\u5206\u7ec4'
       : '\u672a\u627e\u5230\u53ef\u5f55\u5165\u6210\u7ee9\u7684\u5206\u7ec4\u540d\u5355';
@@ -1272,12 +1594,36 @@ const queryRoster = async () => {
   roster.value = (rosterSource || [])
     .map((row) => {
       const matched = resultMap.get(row.student_id);
+      const initialScore = matched?.score ?? row.score ?? '';
+      const timeParts = splitTimeScore(initialScore);
+      const distanceParts = splitDistanceScore(initialScore);
+      const attempt1Value = matched ? (matched[attemptField(resultForm.round, 1)] ?? '') : '';
+      const attempt2Value = matched ? (matched[attemptField(resultForm.round, 2)] ?? '') : '';
+      const attempt3Value = matched ? (matched[attemptField(resultForm.round, 3)] ?? '') : '';
+      const attempt1Distance = splitDistanceScore(attempt1Value);
+      const attempt2Distance = splitDistanceScore(attempt2Value);
+      const attempt3Distance = splitDistanceScore(attempt3Value);
       return {
         ...row,
-        inputScore: matched?.score ?? row.score ?? '',
-        attempt1: matched ? (matched[attemptField(resultForm.round, 1)] ?? '') : '',
-        attempt2: matched ? (matched[attemptField(resultForm.round, 2)] ?? '') : '',
-        attempt3: matched ? (matched[attemptField(resultForm.round, 3)] ?? '') : '',
+        inputScore: initialScore,
+        inputHours: timeParts.hours,
+        inputMinutes: timeParts.minutes,
+        inputSeconds: timeParts.seconds,
+        inputMeters: distanceParts.meters,
+        inputCentimeters: distanceParts.centimeters,
+        inputMillimeters: distanceParts.millimeters,
+        attempt1: attempt1Value,
+        attempt2: attempt2Value,
+        attempt3: attempt3Value,
+        attempt1Meters: attempt1Distance.meters,
+        attempt1Centimeters: attempt1Distance.centimeters,
+        attempt1Millimeters: attempt1Distance.millimeters,
+        attempt2Meters: attempt2Distance.meters,
+        attempt2Centimeters: attempt2Distance.centimeters,
+        attempt2Millimeters: attempt2Distance.millimeters,
+        attempt3Meters: attempt3Distance.meters,
+        attempt3Centimeters: attempt3Distance.centimeters,
+        attempt3Millimeters: attempt3Distance.millimeters,
         rank: matched?.rank ?? row.rank ?? '',
         date: matched?.date ?? '',
       };
@@ -1290,36 +1636,52 @@ const queryRoster = async () => {
       if (laneA !== laneB) return laneA - laneB;
       return String(rowA?.name || '').localeCompare(String(rowB?.name || ''));
     });
+  rosterQueryContext.event = resultForm.event;
+  rosterQueryContext.gender = resultForm.gender;
+  rosterQueryContext.round = resultForm.round;
   resultsQuery.event = resultForm.event;
 };
 
 
 const submitBatchResults = async () => {
-  if (!resultForm.event || !resultForm.round) return;
+  const targetEvent = rosterQueryContext.event || resultForm.event;
+  const targetRound = rosterQueryContext.round || resultForm.round;
+  if (!targetEvent || !targetRound) return;
   resultMessage.value = '';
   const timestamp = new Date().toISOString();
-  const payload = isDistanceEvent(resultForm.event)
+  const payload = isDistanceEvent(targetEvent)
     ? roster.value.flatMap((row) => {
-        const attempts = [row.attempt1, row.attempt2, row.attempt3];
+        const attempts = [1, 2, 3].map((idx) => resolveAttemptValue(row, idx));
         return attempts
           .map((val, idx) => ({ val, idx }))
           .filter((item) => item.val !== '' && item.val !== null && item.val !== undefined)
           .map((item) => ({
-            event: resultForm.event,
+            event: targetEvent,
             student_id: row.student_id,
-            round: resultForm.round,
+            round: targetRound,
             score: Number(item.val),
             attempt: item.idx + 1,
             date: timestamp,
           }));
       })
     : roster.value
-        .filter((row) => row.inputScore !== '' && row.inputScore !== null)
+        .map((row) => {
+          const scoreValue = resultForm.unit === RESULT_METRIC_TIME
+            ? mergeTimeScore(row.inputHours, row.inputMinutes, row.inputSeconds)
+            : resultForm.unit === RESULT_METRIC_DISTANCE
+              ? mergeDistanceScore(row.inputMeters, row.inputCentimeters, row.inputMillimeters)
+              : (row.inputScore !== '' && row.inputScore !== null && row.inputScore !== undefined ? Number(row.inputScore) : null);
+          return {
+            row,
+            scoreValue,
+          };
+        })
+        .filter((item) => item.scoreValue !== null)
         .map((row) => ({
-          event: resultForm.event,
-          student_id: row.student_id,
-          round: resultForm.round,
-          score: Number(row.inputScore),
+          event: targetEvent,
+          student_id: row.row.student_id,
+          round: targetRound,
+          score: Number(row.scoreValue),
           date: timestamp,
         }));
   if (!payload.length) {
@@ -1327,13 +1689,13 @@ const submitBatchResults = async () => {
     return;
   }
   try {
-    const submitUrl = isDistanceEvent(resultForm.event) ? '/results-distance/submit' : '/results/submit';
+    const submitUrl = isDistanceEvent(targetEvent) ? '/results-distance/submit' : '/results/submit';
     for (const item of payload) {
       await api.post(submitUrl, item);
     }
     resultMessage.value = '\u4fdd\u5b58\u6210\u529f';
-    resultsQuery.event = resultForm.event;
-    resultsQuery.round = resultForm.round;
+    resultsQuery.event = targetEvent;
+    resultsQuery.round = targetRound;
     await searchResults();
     await fetchPersonalRanking();
     await fetchCollegeRanking();
@@ -1373,6 +1735,47 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.time-score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.time-segment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.time-segment input {
+  width: 88px;
+}
+.distance-composite {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.distance-segment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.distance-segment input {
+  width: 88px;
+}
+.distance-attempt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #fff;
+}
+.distance-attempt-title {
+  color: #57606a;
+  font-size: 14px;
 }
 .unit-badge {
   min-width: 48px;
